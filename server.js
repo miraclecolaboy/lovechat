@@ -13,12 +13,10 @@ app.use(express.static(__dirname));
 
 // ---------- 数据库配置 ----------
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'chatdb',
-  password: '1',
-  port: 5432,
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
+
 
 // ---------- 初始化数据库 ----------
 async function initDB() {
@@ -296,4 +294,6 @@ io.on('connection', socket => {
 });
 
 // ---------- 启动服务器 ----------
-server.listen(3000, () => console.log('Server running at http://localhost:3000'));
+const PORT = process.env.PORT || 3000; // 使用 Railway 分配的端口，或者本地默认 3000
+server.listen(PORT, () => console.log(`Server running at port ${PORT}`));
+
