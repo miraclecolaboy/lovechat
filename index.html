@@ -1,0 +1,139 @@
+  <!DOCTYPE html>
+  <html lang="zh">
+  <head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>secret chat</title>
+  <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+
+  <!-- 登录卡 -->
+  <div id="loginView" class="card login-card">
+    <h2>登录 / 注册</h2>
+    <input id="li-username" placeholder="用户名" />
+    <input id="li-password" type="password" placeholder="密码" />
+    <!-- 显示邀请码输入，默认留空，用户必须填写（前端仅检查是否填写，后端负责校验有效性） -->
+    <input id="li-code" placeholder="邀请码" value="" />
+
+    <div class="row">
+      <button id="btn-register" class="btn">注册</button>
+      <button id="btn-login" class="btn">登录</button>
+    </div>
+    <p class="note">注册请输入邀请码 设置相较简短的账号密码</p>
+  </div>
+
+
+  <!-- 主界面 -->
+  <div id="app" class="app" style="display:none">
+
+    <header class="topbar">
+      <div class="left">
+        <div id="meName" class="me-name">用户名</div>
+        <div id="statusText" class="small muted">已登录</div>
+      </div>
+      <div class="right">
+        <button id="btn-logout" class="btn">登出</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- 消息 tab -->
+      <section id="tab-messages" class="tab view active">
+        <div id="conversationsPanel" class="panel pad">
+          <div class="title">会话</div>
+          <div id="conversationsList" class="list"></div>
+        </div>
+
+        <div id="chatPanel" class="panel pad" style="display:none">
+          <div class="chat-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:8px">
+              <button id="backToConvos" class="btn small outline">返回</button>
+              <div>
+                <div id="chatTitle">请选择会话</div>
+                <div id="friendRemarkDisplay" class="small muted"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="chatWindow" class="chat-window"></div>
+
+  <div class="composer">
+    <div class="row text-send">
+      <input id="msgInput" placeholder="输入消息并回车发送" />
+      <button id="btnSendText" class="btn">发送文字</button>
+    </div>
+
+    <div class="row image-send">
+      <input type="file" id="imgUpload" accept="image/*" />
+      <button id="btnSendImage" class="btn">发送图片</button>
+    </div>
+  </div>
+
+        </div>
+      </section>
+
+      <!-- 联系人 tab -->
+      <section id="tab-contacts" class="tab view">
+        <div class="panel pad">
+          <div class="title">添加联系人</div>
+          <div class="row" style="gap:8px">
+            <input id="newFriend" placeholder="添加好友用户名" />
+            <button id="btn-add" class="btn">添加</button>
+          </div>
+        </div>
+
+        <div class="panel pad">
+          <div class="title">联系人</div>
+          <div id="friendsList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- 我 tab -->
+      <section id="tab-me" class="tab view">
+        <div class="panel pad">
+          <div class="title"></div>
+          <div class="profile-row">
+            <div id="meAvatarWrap" class="avatar-wrap"></div>
+            <div style="flex:1">
+              <input id="avatarInput" placeholder="头像外链 (示例: https://...)" />
+              <div class="row" style="margin-top:8px">
+                <button id="btnSaveAvatar" class="btn">保存头像</button>
+              </div>
+            </div><div><a href="https://wallpaperscraft.com/catalog/anime" target="_blank">图库1</a>
+            <br><a href="https://anime-pictures.net/" target="_blank">图库2</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel pad">
+          <div class="title">开发者说明</div>
+          <textarea id="meNote" readonly rows="6">
+你好 我是开发者yjx的哥哥 本站点设计初衷为 解决大家没有固定社交账号、登录设备 或者家长偷看隐私等问题 可以分享自己的朋友使用 但请切记不要把网站特别是邀请码分享给陌生人 如有问题可以联系我站内账号：宇宙无敌大帅哥
+
+建议使用固定的浏览器登录账号 比如系统自带浏览器 推荐使用Edge浏览器 如没有固定登录设备 可以记住网站和账号密码使用别人手机电脑或者在手机店登录
+但请注意隐私！！！记得退出账号！！！异处登录不会提醒！！！也不能将原来的账号挤下线！！！出现这种情况直接视作小呆呆！！！
+
+头像设置目前只开放使用外部图片链接 设置方法为点击我提供的图库 找到喜欢的图片 手机端长按复制图片链接或者复制顶部浏览器图片网址（如这样：https://images.wallpaperscraft.com/image/single/girl_glow_eyes_1108829_300x168.jpg）粘贴到输入框内 点击保存头像即可 
+
+因为服务器承载能力有限 图片设置了7天有效期 如果过期联系朋友再发一遍即可 
+
+后续更新按照收集的大家的意愿推进
+
+          </textarea>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-target="tab-messages" id="nav-msg">消息</button>
+      <button class="nav-btn" data-target="tab-contacts" id="nav-contacts">联系人</button>
+      <button class="nav-btn" data-target="tab-me" id="nav-me">我</button>
+    </nav>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./app.js"></script>
+
+  </body>
+  </html>
