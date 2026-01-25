@@ -1,3 +1,6 @@
+const dns = require('dns');
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const { Pool } = require('pg');
