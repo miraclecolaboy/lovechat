@@ -3,6 +3,8 @@ const bodyParser = require('body-parser');
 const { Pool } = require('pg');
 const http = require('http');
 const { Server } = require('socket.io');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,10 +13,35 @@ const io = new Server(server);
 app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
+// ---------- Database config ----------
+let localConfig = {};
+const configPath = path.join(__dirname, 'supabase.config.js');
+if (fs.existsSync(configPath)) {
+  try {
+    localConfig = require(configPath);
+  } catch (err) {
+    console.error('Failed to load supabase.config.js:', err);
+  }
+}
+
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.SUPABASE_DB_URL ||
+  localConfig.databaseUrl;
+
+const sslConfig = localConfig.ssl === undefined
+  ? { rejectUnauthorized: false }
+  : localConfig.ssl;
+
+if (!databaseUrl) {
+  console.error('Missing database connection string. Set DATABASE_URL or update supabase.config.js.');
+  process.exit(1);
+}
+
 // ---------- 数据库配置 ----------
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  connectionString: databaseUrl,
+  ssl: sslConfig
 });
 
 
