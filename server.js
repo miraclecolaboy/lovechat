@@ -91,9 +91,6 @@ async function initDB() {
     );
   `);
 }
-initDB().catch(console.error);
-
-console.log('DB connected');
 
 // ---------- REST 接口 ----------
 app.post('/register', async (req, res) => {
@@ -322,5 +319,16 @@ io.on('connection', socket => {
 
 // ---------- 启动服务器 ----------
 const PORT = process.env.PORT || 3000; // 使用 Railway 分配的端口，或者本地默认 3000
-server.listen(PORT, () => console.log(`Server running at port ${PORT}`));
+async function startServer() {
+  try {
+    await initDB();
+    console.log('DB connected');
+    server.listen(PORT, () => console.log(`Server running at port ${PORT}`));
+  } catch (err) {
+    console.error('DB init failed:', err);
+    process.exit(1);
+  }
+}
+
+startServer();
 
