@@ -27,17 +27,14 @@ if (fs.existsSync(configPath)) {
   }
 }
 
-const databaseUrl =
-  process.env.DATABASE_URL ||
-  process.env.SUPABASE_DB_URL ||
-  localConfig.databaseUrl;
+const databaseUrl = localConfig.databaseUrl;
 
 const sslConfig = localConfig.ssl === undefined
   ? { rejectUnauthorized: false }
   : localConfig.ssl;
 
 if (!databaseUrl) {
-  console.error('Missing database connection string. Set DATABASE_URL or update supabase.config.js.');
+  console.error('Missing database connection string. Update supabase.config.js.');
   process.exit(1);
 }
 
