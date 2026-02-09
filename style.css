@@ -48,8 +48,15 @@ textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;resi
 
 /* 当会话展开时，让聊天面板占据更大高度 */
 .chat-panel-full {
-  display: block !important;
+  display: flex !important;
+  flex-direction: column;
   height: 85vh; /* 调整为 70% 的可视高度，可以根据需要微调 */
+}
+
+.chat-panel-full .chat-window {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 .chat-window {
@@ -68,10 +75,25 @@ textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;resi
 }
 
 .composer .image-send input,
-.composer .image-send button {
+.composer .image-send button,
+.composer .video-send input,
+.composer .video-send button {
   padding: 4px 6px;  
   font-size: 12px;
   margin-top: 20px;   
+}
+
+.inline-video-wrap {
+  margin-top: 6px;
+}
+
+.inline-msg-video {
+  display: block;
+  width: 260px;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  background: #000;
 }
 
 /* 红点，只在消息列表里显示 */
