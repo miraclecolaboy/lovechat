@@ -40,10 +40,6 @@
   const imgUpload = document.getElementById('imgUpload');
   const btnSendImage = document.getElementById('btnSendImage');
 
-  // 视频上传元素（HTML 中应存在）
-  const videoUpload = document.getElementById('videoUpload');
-  const btnSendVideo = document.getElementById('btnSendVideo');
-
   // contacts tab
   const newFriendInput = document.getElementById('newFriend');
   const btnAdd = document.getElementById('btn-add');
@@ -470,74 +466,8 @@ function openConversation(friend) {
     return urlData?.publicUrl || null;
   }
 
-  function getFileExt(name) {
-    const m = String(name || '').match(/\.([a-zA-Z0-9]+)$/);
-    return m ? m[1].toLowerCase() : '';
-  }
-
-  function guessVideoExt(file) {
-    const nameExt = getFileExt(file && file.name);
-    if (nameExt) return nameExt;
-
-    const mime = String((file && file.type) || '').toLowerCase();
-    if (mime === 'video/quicktime') return 'mov';
-    if (mime === 'video/x-m4v') return 'm4v';
-    if (mime && mime.includes('/')) return mime.split('/')[1].toLowerCase();
-    return 'mp4';
-  }
-
-  async function uploadVideo(file) {
-    const ext = guessVideoExt(file);
-    // 生成安全文件名
-    let fileName = `vid_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
-    fileName = fileName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-
-    const contentType = (file && file.type) ? file.type : 'video/mp4';
-    const { error } = await client.storage.from(SUPABASE_BUCKET).upload(fileName, file, {
-      contentType,
-      upsert: false,
-    });
-
-    if (error) {
-      console.error('Supabase upload error:', error);
-      return null;
-    }
-
-    const { data: urlData } = client.storage.from(SUPABASE_BUCKET).getPublicUrl(fileName);
-    return urlData?.publicUrl || null;
-  }
-
-  // --------------- 消息渲染：通用的 URL/图片/视频识别 ---------------
-  // 将文本拆分为普通文本、普通链接、图片/视频预览 DOM 片段
-  function stripTrailingPunctuation(rawUrl) {
-    let url = String(rawUrl || '');
-    let trailing = '';
-    // 常见：一句话里粘贴 URL，末尾会跟上标点
-    while (url && /[)\]}>.,!?;:'"]$/.test(url)) {
-      trailing = url.slice(-1) + trailing;
-      url = url.slice(0, -1);
-    }
-    return { url, trailing };
-  }
-
-  function getUrlPathname(u) {
-    try {
-      return new URL(u).pathname || '';
-    } catch (_) {
-      return String(u || '');
-    }
-  }
-
-  function isImageUrl(u) {
-    const p = getUrlPathname(u);
-    return /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(p);
-  }
-
-  function isVideoUrl(u) {
-    const p = getUrlPathname(u);
-    return /\.(mp4|webm|ogg|mov|m4v|3gp)$/i.test(p);
-  }
-
+  // --------------- 消息渲染：通用的 URL/图片识别 ---------------
+  // 将文本拆分为普通文本、普通链接、图片预览 DOM 片段
   function createMessageContentNode(text) {
     // 非空保护
     if (!text && text !== '') return document.createTextNode('');
@@ -548,8 +478,7 @@ function openConversation(friend) {
     let lastIndex = 0;
     let match;
     while ((match = urlRegex.exec(text)) !== null) {
-      const rawUrl = match[0];
-      const { url, trailing } = stripTrailingPunctuation(rawUrl);
+      const url = match[0];
       const idx = match.index;
       // 之前的普通文本
       if (idx > lastIndex) {
@@ -557,7 +486,11 @@ function openConversation(friend) {
         frag.appendChild(document.createTextNode(plain));
       }
 
-      if (isImageUrl(url)) {
+      // 判断是否为图片链接（按扩展名）
+      const urlForExt = url.split('#')[0].split('?')[0];
+      const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(urlForExt);
+      const isVideo = /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(urlForExt);
+      if (isImg) {
         const wrap = document.createElement('div');
         wrap.className = 'inline-img-wrap';
         const img = document.createElement('img');
@@ -588,18 +521,22 @@ function openConversation(friend) {
         });
         wrap.appendChild(img);
         frag.appendChild(wrap);
-      } else if (isVideoUrl(url)) {
+      } else if (isVideo) {
         const wrap = document.createElement('div');
         wrap.className = 'inline-video-wrap';
+        wrap.style.maxWidth = '260px';
 
         const video = document.createElement('video');
         video.src = url;
         video.controls = true;
-        video.preload = 'metadata';
         video.playsInline = true;
-        video.setAttribute('playsinline', '');
-        video.setAttribute('webkit-playsinline', '');
+        video.preload = 'metadata';
         video.className = 'inline-msg-video';
+        video.style.width = '100%';
+        video.style.maxHeight = '220px';
+        video.style.borderRadius = '8px';
+        video.style.background = '#000';
+
         wrap.appendChild(video);
         frag.appendChild(wrap);
       } else {
@@ -612,8 +549,7 @@ function openConversation(friend) {
         frag.appendChild(a);
       }
 
-      if (trailing) frag.appendChild(document.createTextNode(trailing));
-      lastIndex = idx + rawUrl.length;
+      lastIndex = idx + url.length;
     }
     // 最后的文本
     if (lastIndex < text.length) {
@@ -651,7 +587,7 @@ function openConversation(friend) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  // --------------- 发送消息（文本/图片/视频） ---------------
+  // --------------- 发送消息（文本/图片） ---------------
   async function sendMessage(text) {
     if (!currentFriend) { alert('请选择会话'); return; }
     if (!text) return;
@@ -670,79 +606,28 @@ function openConversation(friend) {
   if(btnSendText) btnSendText.addEventListener('click', () => sendMessage(msgInput.value.trim()));
   if(msgInput) msgInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendMessage(msgInput.value.trim()); });
 
-  // --------------- 事件绑定：图片/视频选择 & 自动上传 ---------------
-  if (btnSendImage && imgUpload) btnSendImage.addEventListener('click', () => imgUpload.click());
-  if (btnSendVideo && videoUpload) btnSendVideo.addEventListener('click', () => videoUpload.click());
-
-  if (imgUpload) {
+  // --------------- 事件绑定：图片选择 & 自动上传 ---------------
+  if(imgUpload) {
     imgUpload.addEventListener('change', async (e) => {
       const fileInput = e.target;
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
-      if (!currentUser || !currentFriend) { alert('请先选择会话'); fileInput.value = ''; return; }
-      if (file.type && !file.type.startsWith('image/')) { alert('请选择图片文件'); fileInput.value = ''; return; }
-
-      const from = currentUser;
-      const to = currentFriend;
-
-      const oldText = btnSendImage ? btnSendImage.textContent : '';
-      if (btnSendImage) { btnSendImage.disabled = true; btnSendImage.textContent = '上传中...'; }
-      try {
-        // 上传并获取公开 URL
-        const url = await uploadImage(file);
-        if (!url) {
-          alert('上传失败');
-          return;
-        }
-
-        // 发送到服务器
-        const payload = { from, to, message: url, type: 'image' };
-        if (socket && socket.connected) socket.emit('send-message', payload);
-        else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
-
-        // 仅在仍处于当前会话时，才即时插入（避免切换会话后插到错误窗口）
-        if (currentFriend === to) addMessageToWindow(from, url);
-        throttleLoadConversations();
-      } finally {
-        if (btnSendImage) { btnSendImage.disabled = false; btnSendImage.textContent = oldText || '发送图片'; }
+      // 上传并获取公开 URL
+      const url = await uploadImage(file);
+      if (!url) {
+        alert('上传失败');
         fileInput.value = '';
+        return;
       }
-    });
-  }
-
-  if (videoUpload) {
-    videoUpload.addEventListener('change', async (e) => {
-      const fileInput = e.target;
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) return;
-      if (!currentUser || !currentFriend) { alert('请先选择会话'); fileInput.value = ''; return; }
-
-      if (file.type && !file.type.startsWith('video/')) { alert('请选择视频文件'); fileInput.value = ''; return; }
-      const MAX_VIDEO_MB = 80;
-      if (file.size && file.size / 1024 / 1024 > MAX_VIDEO_MB) { alert(`视频过大（>${MAX_VIDEO_MB}MB）`); fileInput.value = ''; return; }
-
-      const from = currentUser;
-      const to = currentFriend;
-
-      const oldText = btnSendVideo ? btnSendVideo.textContent : '';
-      if (btnSendVideo) { btnSendVideo.disabled = true; btnSendVideo.textContent = '上传中...'; }
-      try {
-        const url = await uploadVideo(file);
-        if (!url) {
-          alert('上传失败');
-          return;
-        }
-
-        const payload = { from, to, message: url, type: 'video' };
-        if (socket && socket.connected) socket.emit('send-message', payload);
-        else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
-
-        if (currentFriend === to) addMessageToWindow(from, url);
-        throttleLoadConversations();
-      } finally {
-        if (btnSendVideo) { btnSendVideo.disabled = false; btnSendVideo.textContent = oldText || '发送视频'; }
-        fileInput.value = '';
-      }
+      // 插入到会话窗口并作为消息发送（与 sendMessage 保持一致）
+      addMessageToWindow(currentUser, url);
+      // 发送到服务器
+      if (!currentUser || !currentFriend) { fileInput.value = ''; return; }
+      const payload = { from: currentUser, to: currentFriend, message: url, type: 'image' };
+      if (socket && socket.connected) socket.emit('send-message', payload);
+      else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
+      fileInput.value = '';
+      throttleLoadConversations();
     });
   }
 
