@@ -2,18 +2,15 @@
   "name": "simple-chat-pg-safe",
   "version": "1.0.0",
   "main": "server.js",
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "scripts": {
     "start": "node --dns-result-order=ipv4first server.js"
   },
   "dependencies": {
-    "bcryptjs": "*",
-    "body-parser": "*",
-    "cors": "*",
-    "express": "*",
-    "pg": "*",
-    "socket.io": "*"
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^1.20.4",
+    "cors": "^2.8.5",
+    "express": "^4.22.1",
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.1"
   }
 }
