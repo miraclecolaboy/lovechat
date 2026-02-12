@@ -1,4 +1,4 @@
-const dns = require('dns');
+﻿const dns = require('dns');
 if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 
 const express = require('express');
@@ -6,8 +6,6 @@ const bodyParser = require('body-parser');
 const { Pool } = require('pg');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,35 +15,50 @@ app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
 // ---------- Database config ----------
-let localConfig = {};
-const configPath = path.join(__dirname, 'supabase.config.js');
-if (fs.existsSync(configPath)) {
-  try {
-    localConfig = require(configPath);
-  } catch (err) {
-    console.error('Failed to load supabase.config.js:', err);
-  }
-}
+const envDatabaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRESQL_URL ||
+  process.env.RENDER_DATABASE_URL ||
+  process.env.RENDER_POSTGRESQL_URL;
 
-const databaseUrl = localConfig.databaseUrl;
+const hasPgFields =
+  !!process.env.PGHOST &&
+  !!process.env.PGUSER &&
+  !!process.env.PGDATABASE;
 
-const sslConfig = localConfig.ssl === undefined
-  ? { rejectUnauthorized: false }
-  : localConfig.ssl;
-
-if (!databaseUrl) {
-  console.error('Missing database connection string. Update supabase.config.js.');
+if (!envDatabaseUrl && !hasPgFields) {
+  console.error('Missing database connection env. Set DATABASE_URL (recommended) or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.');
   process.exit(1);
 }
 
-// ---------- 数据库配置 ----------
-const pool = new Pool({
-  connectionString: databaseUrl,
-  ssl: sslConfig
-});
+const sslMode = String(process.env.PGSSLMODE || '').toLowerCase();
+const disableSSL =
+  sslMode === 'disable' ||
+  process.env.DB_SSL === 'false' ||
+  process.env.DATABASE_SSL === 'false';
+
+const sslConfig = disableSSL ? false : { rejectUnauthorized: false };
+
+const poolConfig = envDatabaseUrl
+  ? {
+      connectionString: envDatabaseUrl,
+      ssl: sslConfig
+    }
+  : {
+      host: process.env.PGHOST,
+      port: Number(process.env.PGPORT || 5432),
+      user: process.env.PGUSER,
+      password: process.env.PGPASSWORD,
+      database: process.env.PGDATABASE,
+      ssl: sslConfig
+    };
+
+// ---------- 鏁版嵁搴撻厤缃?----------
+const pool = new Pool(poolConfig);
 
 
-// ---------- 初始化数据库 ----------
+// ---------- 鍒濆鍖栨暟鎹簱 ----------
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -92,34 +105,34 @@ async function initDB() {
   `);
 }
 
-// ---------- REST 接口 ----------
+// ---------- REST 鎺ュ彛 ----------
 app.post('/register', async (req, res) => {
   const { username, password, code } = req.body;
 
-  // 校验用户名/密码
-  if (!username || !password) return res.json({ success: false, msg: '用户名/密码不能为空' });
+  // 鏍￠獙鐢ㄦ埛鍚?瀵嗙爜
+  if (!username || !password) return res.json({ success: false, msg: '鐢ㄦ埛鍚?瀵嗙爜涓嶈兘涓虹┖' });
 
-  // 校验注册码
-  if (code !== '0123') return res.json({ success: false, msg: '注册码错误' });
+  // 鏍￠獙娉ㄥ唽鐮?
+  if (code !== '0123') return res.json({ success: false, msg: '邀请码错误' });
 
   try {
     await pool.query('INSERT INTO users(username, password) VALUES($1, $2)', [username, password]);
     res.json({ success: true });
   } catch (err) {
-    res.json({ success: false, msg: err.code === '23505' ? '用户名已存在' : err.message });
+    res.json({ success: false, msg: err.code === '23505' ? '鐢ㄦ埛鍚嶅凡瀛樺湪' : err.message });
   }
 });
 
 
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.json({ success: false, msg: '用户名/密码不能为空' });
+  if (!username || !password) return res.json({ success: false, msg: '鐢ㄦ埛鍚?瀵嗙爜涓嶈兘涓虹┖' });
   try {
     const r = await pool.query('SELECT * FROM users WHERE username=$1 AND password=$2', [username, password]);
     if (r.rows.length) {
       res.json({ success: true, user: r.rows[0] });
     } else {
-      res.json({ success: false, msg: '用户名或密码错误' });
+      res.json({ success: false, msg: '鐢ㄦ埛鍚嶆垨瀵嗙爜閿欒' });
     }
   } catch (err) {
     res.json({ success: false, msg: err.message });
@@ -144,11 +157,11 @@ app.get('/friends/:username', async (req, res) => {
 app.post('/add-friend', async (req, res) => {
   const { user, friend, remark } = req.body;
 
-  if (!user || !friend) return res.json({ success: false, msg: '用户名和好友不能为空' });
+  if (!user || !friend) return res.json({ success: false, msg: '鐢ㄦ埛鍚嶅拰濂藉弸涓嶈兘涓虹┖' });
   if (user === friend) return res.json({ success: false, msg: '不能添加自己为好友' });
 
   try {
-    // 获取用户 ID
+    // 鑾峰彇鐢ㄦ埛 ID
     const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
     const friendRes = await pool.query('SELECT id FROM users WHERE username=$1', [friend]);
     if (!userRes.rows.length || !friendRes.rows.length) return res.json({ success: false, msg: '用户不存在' });
@@ -156,7 +169,7 @@ app.post('/add-friend', async (req, res) => {
     const userId = userRes.rows[0].id;
     const friendId = friendRes.rows[0].id;
 
-    // 插入或更新双向好友关系
+    // 鎻掑叆鎴栨洿鏂板弻鍚戝ソ鍙嬪叧绯?
     await pool.query(`
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, $3)
@@ -168,7 +181,7 @@ app.post('/add-friend', async (req, res) => {
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, '')
       ON CONFLICT (user_id, friend_id) DO NOTHING
-    `, [friendId, userId]); // 对方的备注保持为空
+    `, [friendId, userId]); // 瀵规柟鐨勫娉ㄤ繚鎸佷负绌?
 
     res.json({ success: true });
 
@@ -232,12 +245,12 @@ function broadcastOnlineStatus() {
 io.on('connection', socket => {
   let currentUser = null;
 
-  // 登录
+  // 鐧诲綍
   socket.on('login', async username => {
     currentUser = username;
     onlineUsers[username] = socket.id;
 
-    // 上线时推送未读计数
+    // 涓婄嚎鏃舵帹閫佹湭璇昏鏁?
     try {
       const res = await pool.query(`
         SELECT u.username AS from_user, c.count
@@ -250,11 +263,11 @@ io.on('connection', socket => {
       console.error('unread-counts ERR:', err);
     }
 
-    // 广播在线状态
+    // 骞挎挱鍦ㄧ嚎鐘舵€?
     broadcastOnlineStatus();
   });
 
-  // 发送消息
+  // 鍙戦€佹秷鎭?
   socket.on('send-message', async data => {
     const { from, to, message, type } = data;
     if (!from || !to || !message) return;
@@ -286,7 +299,7 @@ io.on('connection', socket => {
     }
   });
 
-  // 用户打开会话，重置未读计数
+  // 鐢ㄦ埛鎵撳紑浼氳瘽锛岄噸缃湭璇昏鏁?
   socket.on('open-conversation', async ({ user, friend }) => {
     try {
       const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
@@ -301,7 +314,7 @@ io.on('connection', socket => {
     }
   });
 
-  // 登出 / 断开
+  // 鐧诲嚭 / 鏂紑
   socket.on('disconnect', () => {
     if (currentUser && onlineUsers[currentUser] === socket.id) {
       delete onlineUsers[currentUser];
@@ -317,8 +330,8 @@ io.on('connection', socket => {
   }); 
 });
 
-// ---------- 启动服务器 ----------
-const PORT = process.env.PORT || 3000; // 使用 Railway 分配的端口，或者本地默认 3000
+// ---------- 鍚姩鏈嶅姟鍣?----------
+const PORT = process.env.PORT || 3000; // 浣跨敤 Railway 鍒嗛厤鐨勭鍙ｏ紝鎴栬€呮湰鍦伴粯璁?3000
 async function startServer() {
   try {
     await initDB();
@@ -331,4 +344,5 @@ async function startServer() {
 }
 
 startServer();
+
 
