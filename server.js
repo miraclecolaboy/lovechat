@@ -54,11 +54,11 @@ const poolConfig = envDatabaseUrl
       ssl: sslConfig
     };
 
-// ---------- 鏁版嵁搴撻厤缃?----------
+// ---------- 数据库连接 ----------
 const pool = new Pool(poolConfig);
 
 
-// ---------- 鍒濆鍖栨暟鎹簱 ----------
+// ---------- 初始化数据库 ----------
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -105,14 +105,14 @@ async function initDB() {
   `);
 }
 
-// ---------- REST 鎺ュ彛 ----------
+// ---------- REST 接口 ----------
 app.post('/register', async (req, res) => {
   const { username, password, code } = req.body;
 
-  // 鏍￠獙鐢ㄦ埛鍚?瀵嗙爜
+  // 校验用户名和密码
   if (!username || !password) return res.json({ success: false, msg: '鐢ㄦ埛鍚?瀵嗙爜涓嶈兘涓虹┖' });
 
-  // 鏍￠獙娉ㄥ唽鐮?
+  // 校验邀请码
   if (code !== '0123') return res.json({ success: false, msg: '邀请码错误' });
 
   try {
@@ -161,7 +161,7 @@ app.post('/add-friend', async (req, res) => {
   if (user === friend) return res.json({ success: false, msg: '不能添加自己为好友' });
 
   try {
-    // 鑾峰彇鐢ㄦ埛 ID
+    // 获取用户 ID
     const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
     const friendRes = await pool.query('SELECT id FROM users WHERE username=$1', [friend]);
     if (!userRes.rows.length || !friendRes.rows.length) return res.json({ success: false, msg: '用户不存在' });
@@ -169,7 +169,7 @@ app.post('/add-friend', async (req, res) => {
     const userId = userRes.rows[0].id;
     const friendId = friendRes.rows[0].id;
 
-    // 鎻掑叆鎴栨洿鏂板弻鍚戝ソ鍙嬪叧绯?
+    // 插入或更新双向好友关系
     await pool.query(`
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, $3)
@@ -181,7 +181,7 @@ app.post('/add-friend', async (req, res) => {
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, '')
       ON CONFLICT (user_id, friend_id) DO NOTHING
-    `, [friendId, userId]); // 瀵规柟鐨勫娉ㄤ繚鎸佷负绌?
+    `, [friendId, userId]); // 对方备注保持为空
 
     res.json({ success: true });
 
@@ -245,12 +245,12 @@ function broadcastOnlineStatus() {
 io.on('connection', socket => {
   let currentUser = null;
 
-  // 鐧诲綍
+  // 登录
   socket.on('login', async username => {
     currentUser = username;
     onlineUsers[username] = socket.id;
 
-    // 涓婄嚎鏃舵帹閫佹湭璇昏鏁?
+    // 上线时推送未读计数
     try {
       const res = await pool.query(`
         SELECT u.username AS from_user, c.count
@@ -263,11 +263,11 @@ io.on('connection', socket => {
       console.error('unread-counts ERR:', err);
     }
 
-    // 骞挎挱鍦ㄧ嚎鐘舵€?
+    // 广播在线状态
     broadcastOnlineStatus();
   });
 
-  // 鍙戦€佹秷鎭?
+  // 发送消息
   socket.on('send-message', async data => {
     const { from, to, message, type } = data;
     if (!from || !to || !message) return;
@@ -299,7 +299,7 @@ io.on('connection', socket => {
     }
   });
 
-  // 鐢ㄦ埛鎵撳紑浼氳瘽锛岄噸缃湭璇昏鏁?
+  // 用户打开会话时重置未读计数
   socket.on('open-conversation', async ({ user, friend }) => {
     try {
       const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
@@ -314,7 +314,7 @@ io.on('connection', socket => {
     }
   });
 
-  // 鐧诲嚭 / 鏂紑
+  // 登出 / 断开连接
   socket.on('disconnect', () => {
     if (currentUser && onlineUsers[currentUser] === socket.id) {
       delete onlineUsers[currentUser];
@@ -330,8 +330,8 @@ io.on('connection', socket => {
   }); 
 });
 
-// ---------- 鍚姩鏈嶅姟鍣?----------
-const PORT = process.env.PORT || 3000; // 浣跨敤 Railway 鍒嗛厤鐨勭鍙ｏ紝鎴栬€呮湰鍦伴粯璁?3000
+// ---------- 启动服务 ----------
+const PORT = process.env.PORT || 3000; // 使用 Railway 分配的端口，本地默认 3000
 async function startServer() {
   try {
     await initDB();

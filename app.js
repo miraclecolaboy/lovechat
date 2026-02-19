@@ -1,6 +1,6 @@
-﻿// app.js 閳?鐎瑰本鏆ｉ悧鍫礄閸ュ墽澧栭崢瀣級/娑撳﹣绱?+ 閸忋劌鐪☉鍫熶紖閸ュ墽澧栨０鍕潔閿?
+﻿// app.js 聊天前端主逻辑：登录、联系人、会话、消息与媒体上传
 (() => {
-  // --------------- 闁板秶鐤?---------------
+  // --------------- 配置 ---------------
   const DEV_NOTE = '开发说明';
   const SUPABASE_URL = 'https://fjjbodkvytpekzzxerzr.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqamJvZGt2eXRwZWt6enhlcnpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MDAyMjMsImV4cCI6MjA4MDM3NjIyM30.ctMcySWOXS9SbBQBRVQjpK-6SlSxjSZ8aYmUx_Q3ee4';
@@ -8,16 +8,18 @@
   const MAX_UPLOAD_SIZE_MB = 50;
   const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
   const VIDEO_MAX_DURATION_SEC = 10 * 60;
-  const VIDEO_MAX_LONG_EDGE = 640;
-  const VIDEO_MAX_SHORT_EDGE = 360;
-  const VIDEO_TARGET_FPS = 24;
-  const VIDEO_VIDEO_BITRATE = 450 * 1024;
-  const VIDEO_AUDIO_BITRATE = 64 * 1024;
+  const VIDEO_DEFAULT_SHORT_EDGE = 540;
+  const VIDEO_MIN_SHORT_EDGE = 360;
+  const VIDEO_TARGET_FPS = 12;
+  const VIDEO_MIN_VIDEO_BITRATE = 120 * 1024;
+  const VIDEO_MAX_VIDEO_BITRATE = 1200 * 1024;
+  const VIDEO_MIN_AUDIO_BITRATE = 16 * 1024;
+  const VIDEO_MAX_AUDIO_BITRATE = 64 * 1024;
 
-  // supabase client閿涘牏鈥樻穱?SDK 瀹告彃婀?HTML 閸忓牆绱╅崗銉礆
+  // Supabase 客户端（SDK 在 HTML 中先加载）
   const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // --------------- DOM 閸忓啰绀?---------------
+  // --------------- DOM 引用 ---------------
   const loginView = document.getElementById('loginView');
   const app = document.getElementById('app');
   const navBtns = Array.from(document.querySelectorAll('.nav-btn'));
@@ -36,7 +38,7 @@
   const backToConvos = document.getElementById('backToConvos');
   if (backToConvos) {
   backToConvos.addEventListener('click', () => {
-    showConversationsPanel(); // 閸掑洦宕查崶鐐扮窗鐠囨繂鍨悰?
+    showConversationsPanel(); // 返回会话列表面板
   });
 }
 
@@ -44,7 +46,7 @@
   const msgInput = document.getElementById('msgInput');
   const btnSendText = document.getElementById('btnSendText');
 
-  // 閸ュ墽澧栨稉濠佺炊閸忓啰绀岄敍鍦歍ML 娑擃厼绨茬€涙ê婀敍?
+  // 图片/视频发送相关 DOM
   const imgUpload = document.getElementById('imgUpload');
   const btnSendImage = document.getElementById('btnSendImage');
 
@@ -59,12 +61,12 @@
   const btnSaveAvatar = document.getElementById('btnSaveAvatar');
   const meNote = document.getElementById('meNote');
 
-  // --------------- 閻樿埖鈧?---------------
+  // --------------- 运行时状态 ---------------
   let currentUser = null;
   let currentFriend = null;
   let friends = [];
 
-// 閺傛澘顤冪痪銏㈠仯
+// 未读红点状态
 let unreadMap = {};
 const storedUnread = localStorage.getItem('chat_unreadMap');
 if (storedUnread) {
@@ -76,13 +78,13 @@ if (storedUnread) {
 function updateConversationRedDot(friend) {
   const divs = conversationsList.querySelectorAll('.friend');
   divs.forEach(div => {
-    const titleDiv = div.querySelector('div > div'); // 娴兼俺鐦介弽鍥暯
+    const titleDiv = div.querySelector('div > div'); // 会话标题节点
     if (titleDiv && titleDiv.textContent.includes(friend)) {
       const dot = div.querySelector('.red-dot');
       if (dot) dot.style.visibility = unreadMap[friend] ? 'visible' : 'hidden';
     }
   });
-  // 閸氬本顒?localStorage
+  // 持久化到 localStorage
   localStorage.setItem('chat_unreadMap', JSON.stringify(unreadMap));
 }
 
@@ -172,9 +174,9 @@ function updateConversationRedDot(friend) {
 
   socket.on('connect', () => { if(currentUser) socket.emit('login', currentUser); });
 
-  // 閸氬本顒為崥搴ｎ伂閺堫亣顕板☉鍫熶紖閸掔増婀伴崷?unreadMap閿涘牆銇囨禍?鐠侀缍?true閿?
+  // 登录后拉取服务端未读数量，回填本地红点
 socket.on('unread-counts', counts => {
-  // counts 閺嶇厧绱? [{ from_user: 'Alice', count: 3 }, ...]
+  // counts: [{ from_user: 'Alice', count: 3 }, ...]
   counts.forEach(item => {
     if(item.count > 0){
       unreadMap[item.from_user] = true;
@@ -184,9 +186,9 @@ socket.on('unread-counts', counts => {
 });
 
   socket.on('online-status', list => {
-    // 绾喕绻氶崷銊у殠閸掓銆冮崗銊ョ湰閸欘垳鏁?
+    // 在线状态列表同步到全局
     window.onlineUsersList = list || [];
-    renderContacts(); // 濮ｅ繑顐奸崷銊у殠閻樿埖鈧礁褰夐崠鏍厴閸掗攱鏌婃總钘夊几閸掓銆?
+    renderContacts(); // 刷新联系人在线/离线文案
   });
 
 // socket.on('receive-message', ...)
@@ -195,14 +197,14 @@ socket.on('receive-message', data => {
   addMessageToWindow(data.from, data.message);
   
 
- // 閺嶅洩顔囬張顏囶嚢
+ // 收到新消息时设置未读红点
   unreadMap[data.from] = true;
   updateConversationRedDot(data.from);
 
-  // 閺囧瓨鏌婂☉鍫熶紖閸掓銆?DOM
+  // 立即刷新对应会话的红点 DOM
   updateConversationRedDot(data.from);
 
-  //  濡楀矂娼伴柅姘辩叀
+  // 浏览器通知
   if (Notification.permission === 'granted') {
     const n = new Notification(data.from, {
       body: data.message.length > 50 ? data.message.slice(0, 50) + '...' : data.message,
@@ -237,11 +239,11 @@ async function loadFriends(){
       remark: x.remark || ''
     }));
 
-    renderContacts();    // 閳?**閺堚偓闁插秷顩﹂惃鍕叏婢跺秶鍋?*
+    renderContacts();    // 成功后刷新联系人列表
 
   }catch(e){
     friends=[];
-    renderContacts();    // 闁挎瑨顕ら弮鏈电瘍閸掗攱鏌婇敍鍫滅箽閹镐椒绔撮懛杈剧礆
+    renderContacts();    // 失败时也清空并刷新显示
   }
 }
 
@@ -249,8 +251,8 @@ function renderContacts() {
   if (!friendsList) return;
   friendsList.innerHTML = '';
 
-  // 閼惧嘲褰囪ぐ鎾冲閸︺劎鍤庨悽銊﹀煕閸掓銆?
-  const onlineList = window.onlineUsersList || []; // window.onlineUsersList 娴兼艾婀?socket.on('online-status') 閺囧瓨鏌?
+  // 在线状态来源于 socket 的 online-status 事件
+  const onlineList = window.onlineUsersList || []; // 兼容未收到在线列表时的默认值
 
   friends.forEach(item => {
   const f = item.friend;
@@ -273,7 +275,7 @@ function renderContacts() {
   const sub = document.createElement('div');
   sub.className = 'small muted';
   
-  // 閻╁瓨甯存担璺ㄦ暏閺堚偓閺傛壆娈戦崷銊у殠閸掓銆冮崚銈嗘焽
+  // 显示在线/离线状态
   if (window.onlineUsersList && Array.isArray(window.onlineUsersList)) {
     sub.textContent = window.onlineUsersList.includes(f) ? '在线' : '离线';
   } else {
@@ -287,13 +289,13 @@ function renderContacts() {
   div.appendChild(left);
 
 
-    // 閻愮懓鍤幍鎾崇磻閼卞﹤銇?
+    // 点击联系人打开会话
     div.addEventListener('click', () => {
       switchTab('tab-messages');
       openConversation(f);
     });
 
-    // 缂傛牞绶径鍥ㄦ暈閹稿鎸?
+    // 右侧备注按钮
     const editBtn = document.createElement('button');
     editBtn.textContent = '备注';
     editBtn.className = 'edit-remark-btn';
@@ -330,13 +332,13 @@ async function loadConversations() {
     conv.sort((a,b) => {
   const t1 = a.last ? a.last.ts : 0;
   const t2 = b.last ? b.last.ts : 0;
-  return t2 - t1; // 閺堚偓閺傛澘婀崜?
+  return t2 - t1; // 按最新消息时间倒序
 });
 
     conv.forEach(c => {
       const div = document.createElement('div');
       div.className = 'friend';
-      div.style.position = 'relative'; // 閸忔娊鏁敍姘卞閻愬湱绮风€电懓鐣炬担宥呯箑妞よ婀?relative 閻栬泛顔愰崳?
+      div.style.position = 'relative'; // 作为红点定位锚点
 
       const left = document.createElement('div');
       left.style.display = 'flex';
@@ -360,7 +362,7 @@ async function loadConversations() {
 
       div.appendChild(left);
 
-      // 缁俱垻鍋?
+      // 红点
       const dot = document.createElement('div');
       dot.className = 'red-dot';
       dot.style.position = 'absolute';
@@ -373,7 +375,7 @@ async function loadConversations() {
       dot.style.visibility = unreadMap[c.friend] ? 'visible' : 'hidden';
       div.appendChild(dot);
 
-      // 閻愮懓鍤幍鎾崇磻娴兼俺鐦?
+      // 点击会话打开聊天
       div.addEventListener('click', () => openConversation(c.friend));
 
       conversationsList.appendChild(div);
@@ -386,7 +388,7 @@ async function loadConversations() {
 
 function openConversation(friend) {
   currentFriend = friend;
- // 閹垫挸绱戞导姘崇樈鐏忚鲸鐖ｇ拋棰佽礋瀹歌尪顕?
+ // 进入会话时清除该好友未读状态
   unreadMap[friend] = false;
   updateConversationRedDot(friend);
 
@@ -410,8 +412,8 @@ function openConversation(friend) {
 }
 
 
-  // --------------- 閸ュ墽澧栭崢瀣級 & 娑撳﹣绱?---------------
-  // 鏉╂柨娲?Blob閿涘湞PEG閿涘绗栫亸浠嬪櫤閸樺缂夐崚?maxSizeMB
+  // --------------- 媒体处理（图片/视频） ---------------
+  // 判断是否为图片文件（MIME 或扩展名）
   function isImageFile(file) {
     if (!file) return false;
     const name = String(file.name || '').toLowerCase();
@@ -429,15 +431,114 @@ function openConversation(friend) {
     return num % 2 === 0 ? num : num - 1;
   }
 
-  function getTargetVideoSize(width, height) {
-    const w = Math.max(2, Number(width) || VIDEO_MAX_LONG_EDGE);
-    const h = Math.max(2, Number(height) || VIDEO_MAX_SHORT_EDGE);
-    const longEdge = Math.max(w, h);
-    const shortEdge = Math.min(w, h);
-    const scale = Math.min(1, VIDEO_MAX_LONG_EDGE / longEdge, VIDEO_MAX_SHORT_EDGE / shortEdge);
+  function clampNumber(value, min, max) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return min;
+    return Math.min(max, Math.max(min, num));
+  }
+
+  function getTargetVideoSize(width, height, targetShortEdge = VIDEO_DEFAULT_SHORT_EDGE) {
+    const w = Math.max(2, Number(width) || targetShortEdge);
+    const h = Math.max(2, Number(height) || targetShortEdge);
+    const sourceShortEdge = Math.min(w, h);
+    let expectedShortEdge = Math.round(targetShortEdge);
+    if (sourceShortEdge < VIDEO_MIN_SHORT_EDGE) {
+      expectedShortEdge = sourceShortEdge;
+    } else {
+      expectedShortEdge = clampNumber(expectedShortEdge, VIDEO_MIN_SHORT_EDGE, sourceShortEdge);
+    }
+    const scale = Math.min(1, expectedShortEdge / sourceShortEdge);
     return {
       width: clampEven(w * scale),
       height: clampEven(h * scale),
+    };
+  }
+
+  function pickPreferredVideoShortEdge(width, height, durationSec, sourceBytes) {
+    const w = Math.max(2, Number(width) || VIDEO_DEFAULT_SHORT_EDGE);
+    const h = Math.max(2, Number(height) || VIDEO_DEFAULT_SHORT_EDGE);
+    const sourceShortEdge = Math.min(w, h);
+    if (sourceShortEdge <= VIDEO_MIN_SHORT_EDGE) return sourceShortEdge;
+
+    let preferred = VIDEO_DEFAULT_SHORT_EDGE;
+    if (durationSec >= 6 * 60 || sourceBytes >= 35 * 1024 * 1024) preferred = 480;
+    if (durationSec >= 9 * 60 || sourceBytes >= 45 * 1024 * 1024) preferred = VIDEO_MIN_SHORT_EDGE;
+    return Math.min(sourceShortEdge, preferred);
+  }
+
+  function getVideoShortEdgeCandidates(sourceShortEdge, preferredShortEdge) {
+    if (sourceShortEdge <= VIDEO_MIN_SHORT_EDGE) {
+      return [clampEven(sourceShortEdge)];
+    }
+
+    const tiers = [VIDEO_DEFAULT_SHORT_EDGE, 480, 432, 396, VIDEO_MIN_SHORT_EDGE];
+    const startIndex = Math.max(0, tiers.findIndex((tier) => tier <= preferredShortEdge));
+    const list = [];
+
+    for (let i = startIndex; i < tiers.length; i += 1) {
+      const edge = Math.round(Math.min(sourceShortEdge, tiers[i]));
+      const normalized = clampNumber(edge, VIDEO_MIN_SHORT_EDGE, sourceShortEdge);
+      if (!list.includes(normalized)) list.push(normalized);
+    }
+    if (!list.length) list.push(VIDEO_MIN_SHORT_EDGE);
+    return list;
+  }
+
+  function getVideoTargetBytes(sourceBytes) {
+    const hardCapBytes = Math.floor(MAX_UPLOAD_SIZE_BYTES * 0.9);
+    let ratio = 0.9;
+    if (sourceBytes >= 45 * 1024 * 1024) ratio = 0.68;
+    else if (sourceBytes >= 30 * 1024 * 1024) ratio = 0.75;
+    else if (sourceBytes >= 18 * 1024 * 1024) ratio = 0.82;
+    const bySourceBytes = Math.floor(sourceBytes * ratio);
+    const minBytes = Math.min(hardCapBytes, Math.max(2 * 1024 * 1024, Math.floor(sourceBytes * 0.45)));
+    return clampNumber(bySourceBytes, minBytes, hardCapBytes);
+  }
+
+  function getVideoBitratePlan(durationSec, targetBytes) {
+    const safeDuration = Math.max(1, Number(durationSec) || 1);
+    const totalFromBudget = Math.floor((targetBytes * 8) / safeDuration);
+    const totalMin = VIDEO_MIN_VIDEO_BITRATE + VIDEO_MIN_AUDIO_BITRATE;
+    const totalMax = VIDEO_MAX_VIDEO_BITRATE + VIDEO_MAX_AUDIO_BITRATE;
+    const totalBitrate = clampNumber(totalFromBudget, totalMin, totalMax);
+
+    let audioBitsPerSecond = clampNumber(Math.round(totalBitrate * 0.12), VIDEO_MIN_AUDIO_BITRATE, VIDEO_MAX_AUDIO_BITRATE);
+    let videoBitsPerSecond = clampNumber(totalBitrate - audioBitsPerSecond, VIDEO_MIN_VIDEO_BITRATE, VIDEO_MAX_VIDEO_BITRATE);
+
+    if (videoBitsPerSecond + audioBitsPerSecond > totalBitrate) {
+      const remainAudio = totalBitrate - videoBitsPerSecond;
+      audioBitsPerSecond = clampNumber(remainAudio, VIDEO_MIN_AUDIO_BITRATE, VIDEO_MAX_AUDIO_BITRATE);
+    }
+    return { totalBitrate, videoBitsPerSecond, audioBitsPerSecond };
+  }
+
+  function buildVideoCompressionPlan(file, width, height, durationSec) {
+    const sourceBytes = Number(file && file.size) || 0;
+    const sourceShortEdge = Math.max(2, Math.min(Number(width) || VIDEO_DEFAULT_SHORT_EDGE, Number(height) || VIDEO_DEFAULT_SHORT_EDGE));
+    const preferredShortEdge = pickPreferredVideoShortEdge(width, height, durationSec, sourceBytes);
+    const candidateEdges = getVideoShortEdgeCandidates(sourceShortEdge, preferredShortEdge);
+    const targetBytes = getVideoTargetBytes(sourceBytes);
+    const bitratePlan = getVideoBitratePlan(durationSec, targetBytes);
+
+    const targetFps = durationSec >= 8 * 60 ? 10 : VIDEO_TARGET_FPS;
+    const minBitsPerPixelFrame = 0.05;
+    let size = getTargetVideoSize(width, height, candidateEdges[0]);
+
+    for (const shortEdge of candidateEdges) {
+      const nextSize = getTargetVideoSize(width, height, shortEdge);
+      const pixels = Math.max(1, nextSize.width * nextSize.height);
+      const bitsPerPixelFrame = bitratePlan.videoBitsPerSecond / Math.max(1, targetFps * pixels);
+      size = nextSize;
+      if (bitsPerPixelFrame >= minBitsPerPixelFrame || shortEdge <= VIDEO_MIN_SHORT_EDGE) break;
+    }
+
+    return {
+      width: size.width,
+      height: size.height,
+      fps: targetFps,
+      targetBytes,
+      videoBitsPerSecond: bitratePlan.videoBitsPerSecond,
+      audioBitsPerSecond: bitratePlan.audioBitsPerSecond,
     };
   }
 
@@ -457,10 +558,18 @@ function openConversation(friend) {
     return '';
   }
 
-  function createVideoRecorder(stream, mimeType) {
+  function createVideoRecorder(stream, mimeType, videoBitsPerSecond, audioBitsPerSecond) {
     const options = {
-      videoBitsPerSecond: VIDEO_VIDEO_BITRATE,
-      audioBitsPerSecond: VIDEO_AUDIO_BITRATE,
+      videoBitsPerSecond: clampNumber(
+        Number(videoBitsPerSecond) || VIDEO_MAX_VIDEO_BITRATE,
+        VIDEO_MIN_VIDEO_BITRATE,
+        VIDEO_MAX_VIDEO_BITRATE
+      ),
+      audioBitsPerSecond: clampNumber(
+        Number(audioBitsPerSecond) || VIDEO_MAX_AUDIO_BITRATE,
+        VIDEO_MIN_AUDIO_BITRATE,
+        VIDEO_MAX_AUDIO_BITRATE
+      ),
     };
     if (mimeType) {
       try {
@@ -489,7 +598,7 @@ function openConversation(friend) {
         let targetW = img.width;
         let targetH = img.height;
 
-        // 闂勬劕鍩楅崓蹇曠閿涘矂浼╅崗宥嗙€径褍娴橀悧?
+        // 限制总像素，避免超大图压缩过慢或崩溃
         const MAX_PIXELS = 2000 * 2000;
         while (targetW * targetH > MAX_PIXELS) {
           targetW *= 0.9;
@@ -520,7 +629,7 @@ function openConversation(friend) {
 
   async function uploadImage(file) {
     const compressed = await compressImage(file);
-    // 閻㈢喐鍨氱€瑰鍙忛弬鍥︽閸?
+    // 生成安全文件名
     let fileName = `img_${Date.now()}_${Math.random().toString(36).slice(2,8)}.jpg`;
     fileName = fileName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
 
@@ -541,7 +650,7 @@ function openConversation(friend) {
   function compressVideo(file) {
     return new Promise((resolve, reject) => {
       if (!window.MediaRecorder) {
-        reject(new Error('Video compression is not supported in this browser.'));
+        reject(new Error('当前浏览器不支持视频压缩，请使用最新版 Chrome 或 Edge。'));
         return;
       }
 
@@ -565,6 +674,7 @@ function openConversation(friend) {
       let cleaned = false;
       let failed = false;
       let compressTimeout = null;
+      let compressionPlan = null;
 
       function stopTracks(stream) {
         if (!stream) return;
@@ -603,7 +713,7 @@ function openConversation(friend) {
 
       video.onerror = async () => {
         await cleanup();
-        reject(new Error('Failed to read video file.'));
+        reject(new Error('视频文件读取失败'));
       };
 
       video.onloadedmetadata = async () => {
@@ -611,42 +721,53 @@ function openConversation(friend) {
           const duration = Number(video.duration || 0);
           if (!duration || !Number.isFinite(duration)) {
             await cleanup();
-            reject(new Error('Failed to read video duration.'));
+            reject(new Error('无法读取视频时长'));
             return;
           }
           if (duration > VIDEO_MAX_DURATION_SEC + 1) {
             await cleanup();
-            reject(new Error('Video duration cannot exceed 10 minutes.'));
+            reject(new Error('视频时长不能超过10分钟'));
             return;
           }
 
-          const timeoutMs = Math.min(12 * 60 * 1000, Math.max(90 * 1000, duration * 1000 + 120 * 1000));
+          compressionPlan = buildVideoCompressionPlan(file, video.videoWidth, video.videoHeight, duration);
+
+          // 尽量缩短等待时间：长视频使用更高播放倍速。
+          const playbackRate = duration >= 9 * 60 ? 16 : duration >= 6 * 60 ? 12 : duration >= 2 * 60 ? 8 : 5;
+          try {
+            video.defaultPlaybackRate = playbackRate;
+            video.playbackRate = playbackRate;
+          } catch (e) {}
+
+          const timeoutMs = Math.min(
+            10 * 60 * 1000,
+            Math.max(60 * 1000, Math.ceil((duration * 1000) / Math.max(playbackRate, 1)) + 90 * 1000)
+          );
           compressTimeout = setTimeout(async () => {
             failed = true;
             try {
               if (recorder && recorder.state !== 'inactive') recorder.stop();
             } catch (e) {}
             await cleanup();
-            reject(new Error('Video compression timed out. Please try a shorter video.'));
+            reject(new Error('视频压缩超时，请尝试更短视频'));
           }, timeoutMs);
 
-          const targetSize = getTargetVideoSize(video.videoWidth, video.videoHeight);
           const canvas = document.createElement('canvas');
-          canvas.width = targetSize.width;
-          canvas.height = targetSize.height;
+          canvas.width = compressionPlan.width;
+          canvas.height = compressionPlan.height;
           const ctx = canvas.getContext('2d', { alpha: false });
           if (!ctx) {
             await cleanup();
-            reject(new Error('Failed to initialize video canvas.'));
+            reject(new Error('视频画布初始化失败'));
             return;
           }
           if (typeof canvas.captureStream !== 'function') {
             await cleanup();
-            reject(new Error('Video compression is not supported by this browser. Please use Chrome or Edge.'));
+            reject(new Error('当前浏览器不支持视频压缩，请使用最新版 Chrome 或 Edge。'));
             return;
           }
 
-          canvasStream = canvas.captureStream(VIDEO_TARGET_FPS);
+          canvasStream = canvas.captureStream(compressionPlan.fps);
           const tracks = [...canvasStream.getVideoTracks()];
 
           try {
@@ -664,12 +785,17 @@ function openConversation(friend) {
 
           mixedStream = new MediaStream(tracks);
           try {
-            const created = createVideoRecorder(mixedStream, recorderMimeType);
+            const created = createVideoRecorder(
+              mixedStream,
+              recorderMimeType,
+              compressionPlan.videoBitsPerSecond,
+              compressionPlan.audioBitsPerSecond
+            );
             recorder = created.recorder;
             finalMimeType = created.normalizedType || 'video/webm';
           } catch (err) {
             await cleanup();
-            reject(new Error('Failed to start video encoder.'));
+            reject(new Error('视频编码器启动失败'));
             return;
           }
 
@@ -680,7 +806,7 @@ function openConversation(friend) {
           recorder.onerror = async () => {
             failed = true;
             await cleanup();
-            reject(new Error('Video compression failed.'));
+            reject(new Error('视频压缩失败'));
           };
           recorder.onstop = async () => {
             await cleanup();
@@ -698,7 +824,7 @@ function openConversation(friend) {
           }
 
           drawFrame();
-          drawTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / VIDEO_TARGET_FPS)));
+          drawTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / compressionPlan.fps)));
           video.onended = () => {
             if (recorder && recorder.state !== 'inactive') recorder.stop();
           };
@@ -712,17 +838,17 @@ function openConversation(friend) {
           failed = true;
           if (recorder && recorder.state !== 'inactive') recorder.stop();
           await cleanup();
-          reject(new Error((err && err.message) ? err.message : 'Failed to start video compression.'));
+          reject(new Error((err && err.message) ? err.message : '视频压缩启动失败'));
         }
       };
     });
   }
 
   async function uploadMedia(file) {
-    if (!file) throw new Error('No file selected.');
+    if (!file) throw new Error('未选择文件');
     const mediaIsImage = isImageFile(file);
     const mediaIsVideo = isVideoFile(file);
-    if (!mediaIsImage && !mediaIsVideo) throw new Error('Only image/video files are supported.');
+    if (!mediaIsImage && !mediaIsVideo) throw new Error('仅支持图片或视频文件');
 
     let compressed = file;
     let mediaType = 'image';
@@ -742,7 +868,7 @@ function openConversation(friend) {
     }
 
     if (compressed.size > MAX_UPLOAD_SIZE_BYTES) {
-      throw new Error(`Compressed file is still over ${MAX_UPLOAD_SIZE_MB}MB.`);
+      throw new Error(`压缩后仍超过 ${MAX_UPLOAD_SIZE_MB}MB，请缩短时长或降低清晰度`);
     }
 
     let fileName = `${mediaType}_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
@@ -755,34 +881,34 @@ function openConversation(friend) {
 
     if (error) {
       console.error('Supabase upload error:', error);
-      throw new Error('Upload to bucket failed.');
+      throw new Error('上传到存储桶失败');
     }
 
     const { data: urlData } = client.storage.from(SUPABASE_BUCKET).getPublicUrl(fileName);
     const url = urlData?.publicUrl || null;
-    if (!url) throw new Error('Failed to get file URL.');
+    if (!url) throw new Error('获取文件地址失败');
     return { url, type: mediaType };
   }
 
   function createMessageContentNode(text) {
-    // 闂堢偟鈹栨穱婵囧Б
+    // 空文本兜底
     if (!text && text !== '') return document.createTextNode('');
 
     const frag = document.createDocumentFragment();
-    // URL 濮濓絽鍨敍鍫濈发缁犫偓閸楁洩绱濋柅鍌氭値婢堆冾樋閺?http(s) 闁剧偓甯撮敍?
+    // 匹配文本中的 URL（仅 http/https）
     const urlRegex = /https?:\/\/[^\s]+/g;
     let lastIndex = 0;
     let match;
     while ((match = urlRegex.exec(text)) !== null) {
       const url = match[0];
       const idx = match.index;
-      // 娑斿澧犻惃鍕珮闁碍鏋冮張?
+      // 先插入 URL 之前的纯文本
       if (idx > lastIndex) {
         const plain = text.slice(lastIndex, idx);
         frag.appendChild(document.createTextNode(plain));
       }
 
-      // 閸掋倖鏌囬弰顖氭儊娑撳搫娴橀悧鍥懠閹恒儻绱欓幐澶嬪⒖鐏炴洖鎮曢敍?
+      // 按扩展名判断是图片、视频还是普通链接
       const urlForExt = url.split('#')[0].split('?')[0];
       const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(urlForExt);
       const isVideo = /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(urlForExt);
@@ -836,7 +962,7 @@ function openConversation(friend) {
         wrap.appendChild(video);
         frag.appendChild(wrap);
       } else {
-        // 閺咁噣鈧岸鎽奸幒銉︽▔缁€杞拌礋閸欘垳鍋ｉ柧鐐复
+        // 普通链接：渲染为可点击超链接
         const a = document.createElement('a');
         a.href = url;
         a.target = '_blank';
@@ -847,16 +973,16 @@ function openConversation(friend) {
 
       lastIndex = idx + url.length;
     }
-    // 閺堚偓閸氬海娈戦弬鍥ㄦ拱
+    // 补上最后一段纯文本
     if (lastIndex < text.length) {
       frag.appendChild(document.createTextNode(text.slice(lastIndex)));
     }
-    // 婵″倹鐏夊▽鈩冩箒閸栧綊鍘ら崚棰佹崲娴?URL閿涘瞼娲块幒銉ㄧ箲閸ョ偞鏋冮張顒冨Ν閻?
+    // 如果没有命中 URL，直接返回原文本
     if (!frag.childNodes.length) return document.createTextNode(text);
     return frag;
   }
 
-  // 鐏忓棙绉烽幁顖氬敶鐎圭懓鐣ㄩ崗銊﹁閺屾挸鍩屽鏃€鍦洪敍鍫滅瑝娴ｈ法鏁?innerHTML閿?
+  // 使用 DOM 构建消息内容，避免直接 innerHTML 带来的注入风险
   function addMessageToWindow(sender, text) {
     if(!chatWindow) return;
     const isMe = sender === currentUser;
@@ -883,7 +1009,7 @@ function openConversation(friend) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  // --------------- 閸欐垿鈧焦绉烽幁顖ょ礄閺傚洦婀?閸ュ墽澧栭敍?---------------
+  // --------------- 发送消息（文本/媒体） ---------------
   async function sendMessage(text) {
     if (!currentFriend) { alert('鐠囩兘鈧瀚ㄦ导姘崇樈'); return; }
     if (!text) return;
@@ -933,18 +1059,18 @@ function openConversation(friend) {
       }
     }
   }
-  // --------------- 娴滃娆㈢紒鎴濈暰閿涙碍鏋冮張顒€褰傞柅?---------------
+  // --------------- 发送区事件绑定 ---------------
   if(btnSendText) btnSendText.addEventListener('click', () => sendMessage(msgInput.value.trim()));
   if(msgInput) msgInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendMessage(msgInput.value.trim()); });
   if(btnSendImage && imgUpload) btnSendImage.addEventListener('click', () => imgUpload.click());
 
-  // --------------- 娴滃娆㈢紒鎴濈暰閿涙艾娴橀悧鍥偓澶嬪 & 閼奉亜濮╂稉濠佺炊 ---------------
+  // --------------- 文件选择并发送 ---------------
   if(imgUpload) {
     imgUpload.addEventListener('change', async (e) => {
       const fileInput = e.target;
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
-      // 娑撳﹣绱堕獮鎯板箯閸欐牕鍙曞鈧?URL
+      // 统一走媒体发送流程（压缩 + 上传 + 发送 URL）
       await handleMediaSelection(fileInput, file);
       return;
       /*
@@ -953,9 +1079,9 @@ function openConversation(friend) {
         fileInput.value = '';
         return;
       }
-      // 閹绘帒鍙嗛崚棰佺窗鐠囨繄鐛ラ崣锝呰嫙娴ｆ粈璐熷☉鍫熶紖閸欐垿鈧緤绱欐稉?sendMessage 娣囨繃瀵旀稉鈧懛杈剧礆
+      // 发送本地预览消息（旧流程，已停用）
       addMessageToWindow(currentUser, url);
-      // 閸欐垿鈧礁鍩岄張宥呭閸?
+      // 通过 socket 或 fallback 接口发送给对方（旧流程）
       if (!currentUser || !currentFriend) { fileInput.value = ''; return; }
       const payload = { from: currentUser, to: currentFriend, message: url, type: 'image' };
       if (socket && socket.connected) socket.emit('send-message', payload);
@@ -966,7 +1092,7 @@ function openConversation(friend) {
     });
   }
 
-  // --------------- 缂傛牞绶径鍥ㄦ暈 / 濞ｈ濮炴總钘夊几 / 婢舵潙鍎氭穱婵嗙摠 / 濞夈劌鍞介惂璇茬秿缁涘绱欐穱婵堟殌閸樼喖鈧槒绶敍?---------------
+  // --------------- 备注/好友/头像/登录注册 ---------------
   function editRemarkForFriend(f){
     const cur = friends.find(x=>x.friend===f); const curR = cur?cur.remark:'';
     const r = prompt('设置备注（留空则取消）', curR);
