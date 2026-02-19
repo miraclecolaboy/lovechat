@@ -468,122 +468,17 @@ function openConversation(friend) {
 
   // --------------- 消息渲染：通用的 URL/图片识别 ---------------
   // 将文本拆分为普通文本、普通链接、图片预览 DOM 片段
-  function getYouTubeVideoId(rawUrl) {
-    if (!rawUrl) return null;
-    const input = String(rawUrl).trim();
-    const validId = (id) => {
-      if (!id) return null;
-      const normalized = String(id).trim();
-      return /^[a-zA-Z0-9_-]{11}$/.test(normalized) ? normalized : null;
-    };
-    const fallbackFromText = (txt) => {
-      const vMatch = txt.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-      if (vMatch) return validId(vMatch[1]);
-      const pathMatch = txt.match(/(?:youtu\.be\/|\/shorts\/|\/embed\/|\/live\/|\/v\/)([a-zA-Z0-9_-]{11})/);
-      if (pathMatch) return validId(pathMatch[1]);
-      return null;
-    };
-
-    let parsed;
-    try {
-      parsed = new URL(input);
-    } catch (e) {
-      return fallbackFromText(input);
-    }
-
-    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-
-    if (host === 'youtu.be') return validId(pathParts[0]) || fallbackFromText(input);
-
-    const isYouTubeHost =
-      host === 'youtube.com' ||
-      host === 'm.youtube.com' ||
-      host === 'music.youtube.com' ||
-      host === 'youtube-nocookie.com' ||
-      host.endsWith('.youtube.com');
-    if (!isYouTubeHost) return null;
-
-    if (pathParts[0] === 'watch') return validId(parsed.searchParams.get('v')) || fallbackFromText(input);
-    if (pathParts[0] === 'shorts' || pathParts[0] === 'embed' || pathParts[0] === 'live' || pathParts[0] === 'v') {
-      return validId(pathParts[1]) || fallbackFromText(input);
-    }
-    return validId(parsed.searchParams.get('v')) || fallbackFromText(input);
-  }
-
-  function stripTrailingPunctuation(candidateUrl) {
-    const trailingChars = '.,!?;:)]}，。！？；：）】》」';
-    let end = candidateUrl.length;
-    while (end > 0 && trailingChars.includes(candidateUrl[end - 1])) end -= 1;
-    return {
-      cleanUrl: candidateUrl.slice(0, end),
-      trailingText: candidateUrl.slice(end)
-    };
-  }
-
-  function createYouTubePreviewNode(videoId, sourceUrl) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'inline-youtube-card';
-    card.setAttribute('aria-label', 'Click to play YouTube video');
-
-    const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'inline-youtube-thumb-wrap';
-
-    const img = document.createElement('img');
-    img.className = 'inline-youtube-thumb';
-    img.src = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-    img.alt = 'YouTube thumbnail';
-    img.loading = 'lazy';
-
-    const play = document.createElement('span');
-    play.className = 'inline-youtube-play';
-    play.textContent = '▶';
-
-    thumbWrap.appendChild(img);
-    thumbWrap.appendChild(play);
-    card.appendChild(thumbWrap);
-
-    const meta = document.createElement('div');
-    meta.className = 'inline-youtube-meta';
-    meta.textContent = 'YouTube · 点击播放';
-    card.appendChild(meta);
-
-    card.addEventListener('click', () => {
-      const wrap = document.createElement('div');
-      wrap.className = 'inline-youtube-wrap';
-
-      const iframe = document.createElement('iframe');
-      iframe.className = 'inline-msg-youtube';
-      iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
-      iframe.title = 'YouTube video preview';
-      iframe.loading = 'lazy';
-      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-      iframe.allowFullscreen = true;
-
-      wrap.appendChild(iframe);
-      card.replaceWith(wrap);
-    }, { once: true });
-
-    if (sourceUrl) {
-      card.dataset.url = sourceUrl;
-    }
-    return card;
-  }
-
   function createMessageContentNode(text) {
     // 非空保护
     if (!text && text !== '') return document.createTextNode('');
 
     const frag = document.createDocumentFragment();
     // URL 正则（很简单，适合大多数 http(s) 链接）
-    const urlRegex = /https?:\/\/[^\s]+/gi;
+    const urlRegex = /https?:\/\/[^\s]+/g;
     let lastIndex = 0;
     let match;
     while ((match = urlRegex.exec(text)) !== null) {
-      const rawUrl = match[0];
-      const { cleanUrl: url, trailingText } = stripTrailingPunctuation(rawUrl);
+      const url = match[0];
       const idx = match.index;
       // 之前的普通文本
       if (idx > lastIndex) {
@@ -593,12 +488,9 @@ function openConversation(friend) {
 
       // 判断是否为图片链接（按扩展名）
       const urlForExt = url.split('#')[0].split('?')[0];
-      const ytVideoId = getYouTubeVideoId(url);
       const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(urlForExt);
       const isVideo = /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(urlForExt);
-      if (ytVideoId) {
-        frag.appendChild(createYouTubePreviewNode(ytVideoId, url));
-      } else if (isImg) {
+      if (isImg) {
         const wrap = document.createElement('div');
         wrap.className = 'inline-img-wrap';
         const img = document.createElement('img');
@@ -657,8 +549,7 @@ function openConversation(friend) {
         frag.appendChild(a);
       }
 
-      if (trailingText) frag.appendChild(document.createTextNode(trailingText));
-      lastIndex = idx + rawUrl.length;
+      lastIndex = idx + url.length;
     }
     // 最后的文本
     if (lastIndex < text.length) {
