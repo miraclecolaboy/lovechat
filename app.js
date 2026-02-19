@@ -444,14 +444,37 @@ function openConversation(friend) {
   function pickRecorderMimeType() {
     if (!window.MediaRecorder) return '';
     const candidates = [
+      'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
       'video/webm',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1,mp4a.40.2',
       'video/mp4',
     ];
     for (const mime of candidates) {
       if (MediaRecorder.isTypeSupported(mime)) return mime;
     }
     return '';
+  }
+
+  function createVideoRecorder(stream, mimeType) {
+    const options = {
+      videoBitsPerSecond: VIDEO_VIDEO_BITRATE,
+      audioBitsPerSecond: VIDEO_AUDIO_BITRATE,
+    };
+    if (mimeType) {
+      try {
+        return {
+          recorder: new MediaRecorder(stream, { ...options, mimeType }),
+          normalizedType: mimeType.split(';')[0] || 'video/webm',
+        };
+      } catch (e) {}
+    }
+    const fallback = new MediaRecorder(stream, options);
+    return {
+      recorder: fallback,
+      normalizedType: (fallback.mimeType || 'video/webm').split(';')[0],
+    };
   }
 
   function compressImage(file, maxSizeMB = 1) {
@@ -523,11 +546,6 @@ function openConversation(friend) {
       }
 
       const recorderMimeType = pickRecorderMimeType();
-      if (!recorderMimeType) {
-        reject(new Error('当前浏览器无法编码视频'));
-        return;
-      }
-
       const objectUrl = URL.createObjectURL(file);
       const video = document.createElement('video');
       video.src = objectUrl;
@@ -537,6 +555,7 @@ function openConversation(friend) {
       video.crossOrigin = 'anonymous';
 
       let recorder = null;
+      let finalMimeType = 'video/webm';
       let drawTimer = null;
       let canvasStream = null;
       let mixedStream = null;
@@ -583,86 +602,88 @@ function openConversation(friend) {
       };
 
       video.onloadedmetadata = async () => {
-        const duration = Number(video.duration || 0);
-        if (!duration || !Number.isFinite(duration)) {
-          await cleanup();
-          reject(new Error('无法读取视频时长'));
-          return;
-        }
-        if (duration > VIDEO_MAX_DURATION_SEC + 1) {
-          await cleanup();
-          reject(new Error('视频时长不能超过10分钟'));
-          return;
-        }
-
-        const targetSize = getTargetVideoSize(video.videoWidth, video.videoHeight);
-        const canvas = document.createElement('canvas');
-        canvas.width = targetSize.width;
-        canvas.height = targetSize.height;
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (!ctx) {
-          await cleanup();
-          reject(new Error('初始化视频画布失败'));
-          return;
-        }
-
-        canvasStream = canvas.captureStream(VIDEO_TARGET_FPS);
-        const tracks = [...canvasStream.getVideoTracks()];
-
         try {
-          const AudioCtx = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtx) {
-            audioContext = new AudioCtx();
-            audioSource = audioContext.createMediaElementSource(video);
-            audioDestination = audioContext.createMediaStreamDestination();
-            audioSource.connect(audioDestination);
-            audioDestination.stream.getAudioTracks().forEach((track) => tracks.push(track));
+          const duration = Number(video.duration || 0);
+          if (!duration || !Number.isFinite(duration)) {
+            await cleanup();
+            reject(new Error('无法读取视频时长'));
+            return;
           }
-        } catch (err) {
-          console.warn('视频音频轨道捕获失败:', err);
-        }
+          if (duration > VIDEO_MAX_DURATION_SEC + 1) {
+            await cleanup();
+            reject(new Error('视频时长不能超过10分钟'));
+            return;
+          }
 
-        mixedStream = new MediaStream(tracks);
-        try {
-          recorder = new MediaRecorder(mixedStream, {
-            mimeType: recorderMimeType,
-            videoBitsPerSecond: VIDEO_VIDEO_BITRATE,
-            audioBitsPerSecond: VIDEO_AUDIO_BITRATE,
-          });
-        } catch (err) {
-          await cleanup();
-          reject(new Error('启动视频编码器失败'));
-          return;
-        }
+          const targetSize = getTargetVideoSize(video.videoWidth, video.videoHeight);
+          const canvas = document.createElement('canvas');
+          canvas.width = targetSize.width;
+          canvas.height = targetSize.height;
+          const ctx = canvas.getContext('2d', { alpha: false });
+          if (!ctx) {
+            await cleanup();
+            reject(new Error('初始化视频画布失败'));
+            return;
+          }
+          if (typeof canvas.captureStream !== 'function') {
+            await cleanup();
+            reject(new Error('当前浏览器不支持视频压缩，请用Chrome或Edge重试'));
+            return;
+          }
 
-        const chunks = [];
-        recorder.ondataavailable = (ev) => {
-          if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-        };
-        recorder.onerror = async () => {
-          failed = true;
-          await cleanup();
-          reject(new Error('视频压缩失败'));
-        };
-        recorder.onstop = async () => {
-          await cleanup();
-          if (failed) return;
-          const type = recorderMimeType.split(';')[0] || 'video/webm';
-          resolve(new Blob(chunks, { type }));
-        };
+          canvasStream = canvas.captureStream(VIDEO_TARGET_FPS);
+          const tracks = [...canvasStream.getVideoTracks()];
 
-        function drawFrame() {
-          if (video.paused || video.ended) return;
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        }
+          try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+              audioContext = new AudioCtx();
+              audioSource = audioContext.createMediaElementSource(video);
+              audioDestination = audioContext.createMediaStreamDestination();
+              audioSource.connect(audioDestination);
+              audioDestination.stream.getAudioTracks().forEach((track) => tracks.push(track));
+            }
+          } catch (err) {
+            console.warn('视频音频轨道捕获失败:', err);
+          }
 
-        drawFrame();
-        drawTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / VIDEO_TARGET_FPS)));
-        video.onended = () => {
-          if (recorder && recorder.state !== 'inactive') recorder.stop();
-        };
+          mixedStream = new MediaStream(tracks);
+          try {
+            const created = createVideoRecorder(mixedStream, recorderMimeType);
+            recorder = created.recorder;
+            finalMimeType = created.normalizedType || 'video/webm';
+          } catch (err) {
+            await cleanup();
+            reject(new Error('启动视频编码器失败'));
+            return;
+          }
 
-        try {
+          const chunks = [];
+          recorder.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+          };
+          recorder.onerror = async () => {
+            failed = true;
+            await cleanup();
+            reject(new Error('视频压缩失败'));
+          };
+          recorder.onstop = async () => {
+            await cleanup();
+            if (failed) return;
+            resolve(new Blob(chunks, { type: finalMimeType }));
+          };
+
+          function drawFrame() {
+            if (video.paused || video.ended) return;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          }
+
+          drawFrame();
+          drawTimer = setInterval(drawFrame, Math.max(16, Math.round(1000 / VIDEO_TARGET_FPS)));
+          video.onended = () => {
+            if (recorder && recorder.state !== 'inactive') recorder.stop();
+          };
+
           if (audioContext && audioContext.state === 'suspended') {
             await audioContext.resume();
           }
@@ -672,7 +693,7 @@ function openConversation(friend) {
           failed = true;
           if (recorder && recorder.state !== 'inactive') recorder.stop();
           await cleanup();
-          reject(new Error('开始视频压缩失败'));
+          reject(new Error((err && err.message) ? err.message : '开始视频压缩失败'));
         }
       };
     });
@@ -712,6 +733,7 @@ function openConversation(friend) {
       contentType,
       upsert: false,
     });
+
     if (error) {
       console.error('Supabase upload error:', error);
       throw new Error('上传到存储桶失败');
@@ -874,7 +896,7 @@ function openConversation(friend) {
     const oldBtnText = btnSendImage ? btnSendImage.textContent : '';
     if (btnSendImage) {
       btnSendImage.disabled = true;
-        btnSendImage.textContent = isVideoFile(file) ? '压缩中...' : '上传中...';
+      btnSendImage.textContent = isVideoFile(file) ? '压缩中...' : '上传中...';
     }
 
     try {
@@ -885,12 +907,12 @@ function openConversation(friend) {
       else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
       throttleLoadConversations();
     } catch (err) {
-        alert((err && err.message) ? err.message : '上传失败');
+      alert((err && err.message) ? err.message : '上传失败');
     } finally {
       fileInput.value = '';
       if (btnSendImage) {
         btnSendImage.disabled = false;
-          btnSendImage.textContent = oldBtnText || '发送图片/视频';
+        btnSendImage.textContent = oldBtnText || '发送图片/视频';
       }
     }
   }
@@ -906,21 +928,20 @@ function openConversation(friend) {
       const fileInput = e.target;
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
+      // 上传并获取公开 URL
       await handleMediaSelection(fileInput, file);
       return;
       /*
-      // 上传并获取公开 URL
-      const uploaded = await uploadMedia(file);
-      if (!currentUser || !currentFriend) {
+      if (!url) {
         alert('上传失败');
         fileInput.value = '';
         return;
       }
       // 插入到会话窗口并作为消息发送（与 sendMessage 保持一致）
-      addMessageToWindow(currentUser, uploaded.url);
+      addMessageToWindow(currentUser, url);
       // 发送到服务器
       if (!currentUser || !currentFriend) { fileInput.value = ''; return; }
-      const payload = { from: currentUser, to: currentFriend, message: uploaded.url, type: uploaded.type };
+      const payload = { from: currentUser, to: currentFriend, message: url, type: 'image' };
       if (socket && socket.connected) socket.emit('send-message', payload);
       else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
       fileInput.value = '';
