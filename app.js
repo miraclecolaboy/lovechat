@@ -468,6 +468,40 @@ function openConversation(friend) {
 
   // --------------- 消息渲染：通用的 URL/图片识别 ---------------
   // 将文本拆分为普通文本、普通链接、图片预览 DOM 片段
+  function getYouTubeVideoId(rawUrl) {
+    if (!rawUrl) return null;
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+    } catch (e) {
+      return null;
+    }
+
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const validId = (id) => {
+      if (!id) return null;
+      const normalized = String(id).trim();
+      return /^[a-zA-Z0-9_-]{11}$/.test(normalized) ? normalized : null;
+    };
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (host === 'youtu.be') return validId(pathParts[0]);
+
+    const isYouTubeHost =
+      host === 'youtube.com' ||
+      host === 'm.youtube.com' ||
+      host === 'music.youtube.com' ||
+      host === 'youtube-nocookie.com';
+
+    if (!isYouTubeHost) return null;
+
+    if (pathParts[0] === 'watch') return validId(parsed.searchParams.get('v'));
+    if (pathParts[0] === 'shorts' || pathParts[0] === 'embed' || pathParts[0] === 'live' || pathParts[0] === 'v') {
+      return validId(pathParts[1]);
+    }
+    return null;
+  }
+
   function createMessageContentNode(text) {
     // 非空保护
     if (!text && text !== '') return document.createTextNode('');
@@ -488,9 +522,25 @@ function openConversation(friend) {
 
       // 判断是否为图片链接（按扩展名）
       const urlForExt = url.split('#')[0].split('?')[0];
+      const ytVideoId = getYouTubeVideoId(url);
       const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(urlForExt);
       const isVideo = /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(urlForExt);
-      if (isImg) {
+      if (ytVideoId) {
+        const wrap = document.createElement('div');
+        wrap.className = 'inline-youtube-wrap';
+
+        const iframe = document.createElement('iframe');
+        iframe.className = 'inline-msg-youtube';
+        iframe.src = `https://www.youtube.com/embed/${ytVideoId}`;
+        iframe.title = 'YouTube video preview';
+        iframe.loading = 'lazy';
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        iframe.allowFullscreen = true;
+
+        wrap.appendChild(iframe);
+        frag.appendChild(wrap);
+      } else if (isImg) {
         const wrap = document.createElement('div');
         wrap.className = 'inline-img-wrap';
         const img = document.createElement('img');
