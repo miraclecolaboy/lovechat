@@ -39,6 +39,7 @@
   // 媒体上传元素（HTML 中应存在）
   const imgUpload = document.getElementById('imgUpload');
   const btnSendImage = document.getElementById('btnSendImage');
+  const DEFAULT_MEDIA_SEND_TEXT = btnSendImage ? btnSendImage.textContent : '发送图片/视频';
 
   // contacts tab
   const newFriendInput = document.getElementById('newFriend');
@@ -56,6 +57,7 @@
   let currentUser = null;
   let currentFriend = null;
   let friends = [];
+  let pendingMediaFile = null;
 
 // 新增红点
 let unreadMap = {};
@@ -141,6 +143,52 @@ function updateConversationRedDot(friend) {
     return wrapper;
   }
   function renderMyAvatar(){ if(!meAvatarWrap) return; meAvatarWrap.innerHTML=''; meAvatarWrap.appendChild(makeAvatarDOM(currentUser,myAvatar,52)); }
+
+  function setPendingMedia(file) {
+    pendingMediaFile = file || null;
+    if (!btnSendImage) return;
+    if (!pendingMediaFile) {
+      btnSendImage.textContent = DEFAULT_MEDIA_SEND_TEXT;
+      btnSendImage.title = '';
+      return;
+    }
+    const isVideo = !!pendingMediaFile.type && pendingMediaFile.type.startsWith('video/');
+    btnSendImage.textContent = isVideo ? '发送视频' : '发送图片';
+    btnSendImage.title = pendingMediaFile.name || '';
+  }
+
+  function clearPendingMedia() {
+    pendingMediaFile = null;
+    if (imgUpload) imgUpload.value = '';
+    if (btnSendImage) {
+      btnSendImage.textContent = DEFAULT_MEDIA_SEND_TEXT;
+      btnSendImage.title = '';
+    }
+  }
+
+  function getMediaKind(file) {
+    if (!file) return null;
+    if (file.type && file.type.startsWith('image/')) return 'image';
+    if (file.type && file.type.startsWith('video/')) return 'video';
+    return null;
+  }
+
+  async function refreshMyAvatarFromServer() {
+    if (!currentUser) return;
+    try {
+      const r = await fetch(`/user/${encodeURIComponent(currentUser)}`);
+      if (!r.ok) return;
+      const j = await r.json();
+      const latest = (j && typeof j.avatar === 'string') ? j.avatar : '';
+      myAvatar = latest || '';
+      avatarCache[currentUser] = myAvatar;
+      localStorage.setItem('chat_myAvatar', myAvatar);
+      if (avatarInput) avatarInput.value = myAvatar;
+      renderMyAvatar();
+      renderContacts();
+      throttleLoadConversations();
+    } catch (e) {}
+  }
 
   function showConversationsPanel(){ if(conversationsPanel) conversationsPanel.style.display=''; if(chatPanel) chatPanel.style.display='none'; if(chatPanel) chatPanel.classList.remove('chat-panel-full'); window.currentFriend = null; }
   function showChatPanelFull(){ if(conversationsPanel) conversationsPanel.style.display='none'; if(chatPanel) chatPanel.style.display=''; if(chatPanel) chatPanel.classList.add('chat-panel-full'); }
@@ -641,48 +689,63 @@ function openConversation(friend) {
   if(btnSendText) btnSendText.addEventListener('click', () => sendMessage(msgInput.value.trim()));
   if(msgInput) msgInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendMessage(msgInput.value.trim()); });
 
-  // --------------- 事件绑定：图片/视频选择 & 自动上传 ---------------
-  if (btnSendImage && imgUpload) {
-    btnSendImage.addEventListener('click', () => imgUpload.click());
+  // --------------- 事件绑定：图片/视频选择 & 按钮发送 ---------------
+  if (imgUpload) {
+    imgUpload.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) {
+        clearPendingMedia();
+        return;
+      }
+      const mediaType = getMediaKind(file);
+      if (!mediaType) {
+        alert('仅支持图片或视频文件');
+        clearPendingMedia();
+        return;
+      }
+      setPendingMedia(file);
+    });
   }
 
-  if(imgUpload) {
-    imgUpload.addEventListener('change', async (e) => {
-      const fileInput = e.target;
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) return;
-
+  if (btnSendImage) {
+    btnSendImage.addEventListener('click', async () => {
+      if (!pendingMediaFile) {
+        alert('请先选择图片或视频文件');
+        return;
+      }
       if (!currentUser || !currentFriend) {
         alert('请先选择会话');
-        fileInput.value = '';
         return;
       }
 
-      const isImage = !!file.type && file.type.startsWith('image/');
-      const isVideo = !!file.type && file.type.startsWith('video/');
-      if (!isImage && !isVideo) {
-        alert('仅支持图片或视频文件');
-        fileInput.value = '';
-        return;
+      btnSendImage.disabled = true;
+      const prevText = btnSendImage.textContent;
+      btnSendImage.textContent = '发送中...';
+      try {
+        // 上传并获取公开 URL（图片压缩；视频原文件上传）
+        const { url, mediaType } = await uploadMedia(pendingMediaFile);
+        if (!url || !mediaType) {
+          alert('上传失败');
+          return;
+        }
+
+        // 插入到会话窗口并作为消息发送
+        addMessageToWindow(currentUser, url);
+
+        // 发送到服务器
+        const payload = { from: currentUser, to: currentFriend, message: url, type: mediaType };
+        if (socket && socket.connected) socket.emit('send-message', payload);
+        else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
+        clearPendingMedia();
+        throttleLoadConversations();
+      } finally {
+        btnSendImage.disabled = false;
+        if (!pendingMediaFile) {
+          btnSendImage.textContent = DEFAULT_MEDIA_SEND_TEXT;
+        } else {
+          btnSendImage.textContent = prevText;
+        }
       }
-
-      // 上传并获取公开 URL（图片压缩；视频原文件上传）
-      const { url, mediaType } = await uploadMedia(file);
-      if (!url || !mediaType) {
-        alert('上传失败');
-        fileInput.value = '';
-        return;
-      }
-
-      // 插入到会话窗口并作为消息发送（与 sendMessage 保持一致）
-      addMessageToWindow(currentUser, url);
-
-      // 发送到服务器
-      const payload = { from: currentUser, to: currentFriend, message: url, type: mediaType };
-      if (socket && socket.connected) socket.emit('send-message', payload);
-      else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
-      fileInput.value = '';
-      throttleLoadConversations();
     });
   }
 
@@ -741,6 +804,7 @@ function openConversation(friend) {
         avatarInput.value = myAvatar;
         renderMyAvatar();
         connectSocket();
+        await refreshMyAvatarFromServer();
         await loadFriends();
         throttleLoadConversations();
         meNote.value = DEV_NOTE;
@@ -763,9 +827,8 @@ function openConversation(friend) {
       avatarInput.value = myAvatar;
       renderMyAvatar();
       connectSocket();
-      loadFriends().then(()=>{ throttleLoadConversations(); 
-          fetchUnreadOnLogin();
-      });
+      refreshMyAvatarFromServer();
+      loadFriends().then(()=>{ throttleLoadConversations(); });
       
       meNote.value = DEV_NOTE;
       showApp();

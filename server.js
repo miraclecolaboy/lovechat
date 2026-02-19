@@ -153,6 +153,18 @@ app.get('/friends/:username', async (req, res) => {
   }
 });
 
+app.get('/user/:username', async (req, res) => {
+  const username = req.params.username;
+  try {
+    const r = await pool.query('SELECT username, avatar FROM users WHERE username=$1', [username]);
+    if (!r.rows.length) return res.status(404).json({ success: false, msg: '用户不存在' });
+    const u = r.rows[0];
+    res.json({ success: true, username: u.username, avatar: u.avatar || '' });
+  } catch (err) {
+    res.status(500).json({ success: false, msg: err.message });
+  }
+});
+
 app.post('/add-friend', async (req, res) => {
   const { user, friend, remark } = req.body;
 
