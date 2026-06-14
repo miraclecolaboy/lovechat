@@ -3,6 +3,9 @@ if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
 
 const express = require('express');
 const bodyParser = require('body-parser');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { Pool } = require('pg');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -13,6 +16,33 @@ const io = new Server(server);
 
 app.use(bodyParser.json());
 app.use(express.static(__dirname));
+
+// ---------- 文件上传配置 ----------
+// 确保 uploads 目录存在
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// multer 存储配置：保存在 uploads/ 目录，保持原扩展名
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.bin';
+    const name = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+    cb(null, name);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB 上限
+});
+
+// 静态托管 uploads 目录（供前端直接访问）
+app.use('/uploads', express.static(uploadsDir));
 
 // ---------- Database config ----------
 const envDatabaseUrl =
@@ -54,9 +84,7 @@ const poolConfig = envDatabaseUrl
       ssl: sslConfig
     };
 
-// ---------- 数据库配置 ----------
 const pool = new Pool(poolConfig);
-
 
 async function initDB() {
   await pool.query(`
@@ -108,10 +136,8 @@ async function initDB() {
 app.post('/register', async (req, res) => {
   const { username, password, code } = req.body;
 
-  // 校验用户名/密码
   if (!username || !password) return res.json({ success: false, msg: '用户名/密码不能为空' });
 
-  // 校验邀请码
   if (code !== '0123') return res.json({ success: false, msg: '邀请码错误' });
 
   try {
@@ -121,7 +147,6 @@ app.post('/register', async (req, res) => {
     res.json({ success: false, msg: err.code === '23505' ? '用户名已存在' : err.message });
   }
 });
-
 
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
@@ -172,7 +197,6 @@ app.post('/add-friend', async (req, res) => {
   if (user === friend) return res.json({ success: false, msg: '不能添加自己为好友' });
 
   try {
-    // 获取用户 ID
     const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
     const friendRes = await pool.query('SELECT id FROM users WHERE username=$1', [friend]);
     if (!userRes.rows.length || !friendRes.rows.length) return res.json({ success: false, msg: '用户不存在' });
@@ -180,7 +204,6 @@ app.post('/add-friend', async (req, res) => {
     const userId = userRes.rows[0].id;
     const friendId = friendRes.rows[0].id;
 
-    // 插入或更新双向好友关系
     await pool.query(`
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, $3)
@@ -192,7 +215,7 @@ app.post('/add-friend', async (req, res) => {
       INSERT INTO friends(user_id, friend_id, remark)
       VALUES ($1, $2, '')
       ON CONFLICT (user_id, friend_id) DO NOTHING
-    `, [friendId, userId]); // 对方的备注保持为空
+    `, [friendId, userId]);
 
     res.json({ success: true });
 
@@ -201,7 +224,6 @@ app.post('/add-friend', async (req, res) => {
     res.json({ success: false, msg: err.message });
   }
 });
-
 
 app.post('/set-remark', async (req, res) => {
   const { owner, friend, remark } = req.body;
@@ -245,8 +267,26 @@ app.get('/messages/:user/:friend', async (req, res) => {
   }
 });
 
+// ---------- 文件上传接口（替代 Supabase Storage） ----------
+app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.json({ success: false, msg: '没有上传文件' });
+  }
+
+  // 生成可直接访问的 URL
+  const url = `/uploads/${req.file.filename}`;
+  const isImage = req.file.mimetype.startsWith('image/');
+  const isVideo = req.file.mimetype.startsWith('video/');
+
+  res.json({
+    success: true,
+    url,
+    mediaType: isImage ? 'image' : (isVideo ? 'video' : 'file')
+  });
+});
+
 // ---------- Socket.IO ----------
-const onlineUsers = {}; // username => socket.id
+const onlineUsers = {};
 
 function broadcastOnlineStatus() {
   const onlineList = Object.keys(onlineUsers);
@@ -256,12 +296,10 @@ function broadcastOnlineStatus() {
 io.on('connection', socket => {
   let currentUser = null;
 
-  // 登录
   socket.on('login', async username => {
     currentUser = username;
     onlineUsers[username] = socket.id;
 
-    // 上线时推送未读计数
     try {
       const res = await pool.query(`
         SELECT u.username AS from_user, c.count
@@ -274,11 +312,9 @@ io.on('connection', socket => {
       console.error('unread-counts ERR:', err);
     }
 
-    // 广播在线状态
     broadcastOnlineStatus();
   });
 
-  // 发送消息
   socket.on('send-message', async data => {
     const { from, to, message, type } = data;
     if (!from || !to || !message) return;
@@ -310,7 +346,6 @@ io.on('connection', socket => {
     }
   });
 
-  // 用户打开会话，重置未读计数
   socket.on('open-conversation', async ({ user, friend }) => {
     try {
       const userRes = await pool.query('SELECT id FROM users WHERE username=$1', [user]);
@@ -325,7 +360,6 @@ io.on('connection', socket => {
     }
   });
 
-  // 登出 / 断开
   socket.on('disconnect', () => {
     if (currentUser && onlineUsers[currentUser] === socket.id) {
       delete onlineUsers[currentUser];
@@ -338,11 +372,11 @@ io.on('connection', socket => {
       delete onlineUsers[username];
       broadcastOnlineStatus();
     }
-  }); 
+  });
 });
 
 // ---------- 启动服务器 ----------
-const PORT = process.env.PORT || 3000; // 使用 Railway 分配的端口，或者本地默认 3000
+const PORT = process.env.PORT || 3000;
 async function startServer() {
   try {
     await initDB();
@@ -355,5 +389,3 @@ async function startServer() {
 }
 
 startServer();
-
-

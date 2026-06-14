@@ -1,14 +1,6 @@
 // app.js — 完整版（图片压缩/上传 + 全局消息图片预览）
+// 数据全部存储在 Railway（PostgreSQL + 本地文件系统），不再使用 Supabase
 (() => {
-  // --------------- 配置 ---------------
-  
-  const SUPABASE_URL = 'https://fjjbodkvytpekzzxerzr.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZqamJvZGt2eXRwZWt6enhlcnpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MDAyMjMsImV4cCI6MjA4MDM3NjIyM30.ctMcySWOXS9SbBQBRVQjpK-6SlSxjSZ8aYmUx_Q3ee4';
-  const SUPABASE_BUCKET = 'chat';
-
-  // supabase client（确保 SDK 已在 HTML 先引入）
-  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
   // --------------- DOM 元素 ---------------
   const loginView = document.getElementById('loginView');
   const app = document.getElementById('app');
@@ -28,7 +20,7 @@
   const backToConvos = document.getElementById('backToConvos');
   if (backToConvos) {
   backToConvos.addEventListener('click', () => {
-    showConversationsPanel(); // 切换回会话列表
+    showConversationsPanel();
   });
 }
 
@@ -51,7 +43,7 @@
   const avatarInput = document.getElementById('avatarInput');
   const btnSaveAvatar = document.getElementById('btnSaveAvatar');
   const meNote = document.getElementById('meNote');
-  const DEV_NOTE = meNote.value; // 直接从 HTML 读取
+  const DEV_NOTE = meNote.value;
 
   // --------------- 状态 ---------------
   let currentUser = null;
@@ -59,7 +51,6 @@
   let friends = [];
   let pendingMediaFile = null;
 
-// 新增红点
 let unreadMap = {};
 const storedUnread = localStorage.getItem('chat_unreadMap');
 if (storedUnread) {
@@ -71,27 +62,20 @@ if (storedUnread) {
 function updateConversationRedDot(friend) {
   const divs = conversationsList.querySelectorAll('.friend');
   divs.forEach(div => {
-    const titleDiv = div.querySelector('div > div'); // 会话标题
+    const titleDiv = div.querySelector('div > div');
     if (titleDiv && titleDiv.textContent.includes(friend)) {
       const dot = div.querySelector('.red-dot');
       if (dot) dot.style.visibility = unreadMap[friend] ? 'visible' : 'hidden';
     }
   });
-  // 同步 localStorage
   localStorage.setItem('chat_unreadMap', JSON.stringify(unreadMap));
 }
 
-
   let myAvatar = '';
-
-  // avatar cache
   const avatarCache = {};
   const avatarPromises = {};
-
-  // socket
   let socket = null;
 
-  // throttle / mutex
   let _loadConvTimer = null;
   let _isLoadingConversations = false;
   function throttleLoadConversations() {
@@ -113,7 +97,7 @@ function updateConversationRedDot(friend) {
   }
   navBtns.forEach(b => b.addEventListener('click', ()=> switchTab(b.dataset.target)));
 
-  function escapeHTML(s){ if(!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function escapeHTML(s){ if(!s) return ''; return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"'); }
   function truncate(s,n){ if(!s) return ''; return s.length>n?s.slice(0,n-1)+'…':s; }
   function formatTime(ts){ try{ const d=new Date(ts); return d.toLocaleTimeString(); }catch(e){ return ''; } }
   function runAfterUIReady(cb){ requestAnimationFrame(()=>{ requestAnimationFrame(()=>{ setTimeout(() => { try{ cb(); }catch(e){ console.error(e); } },0); }); }); }
@@ -213,9 +197,7 @@ function updateConversationRedDot(friend) {
 
   socket.on('connect', () => { if(currentUser) socket.emit('login', currentUser); });
 
-  // 同步后端未读消息到本地 unreadMap（大于0记作 true）
 socket.on('unread-counts', counts => {
-  // counts 格式: [{ from_user: 'Alice', count: 3 }, ...]
   counts.forEach(item => {
     if(item.count > 0){
       unreadMap[item.from_user] = true;
@@ -225,25 +207,19 @@ socket.on('unread-counts', counts => {
 });
 
   socket.on('online-status', list => {
-    // 确保在线列表全局可用
     window.onlineUsersList = list || [];
-    renderContacts(); // 每次在线状态变化都刷新好友列表
+    renderContacts();
   });
 
-// socket.on('receive-message', ...)
 socket.on('receive-message', data => {
   if (!data || !data.from) return;
   addMessageToWindow(data.from, data.message);
-  
 
- // 标记未读
   unreadMap[data.from] = true;
   updateConversationRedDot(data.from);
 
-  // 更新消息列表 DOM
   updateConversationRedDot(data.from);
 
-  //  桌面通知
   if (Notification.permission === 'granted') {
     const n = new Notification(data.from, {
       body: data.message.length > 50 ? data.message.slice(0, 50) + '…' : data.message,
@@ -260,8 +236,7 @@ socket.on('receive-message', data => {
    throttleLoadConversations();
 });
 
-
-    socket.on('online-status', list => { /* optional: set onlineUsers if you maintain that */ });
+    socket.on('online-status', list => { });
   }
 
   // --------------- Friends / Conversations ---------------
@@ -278,11 +253,11 @@ async function loadFriends(){
       remark: x.remark || ''
     }));
 
-    renderContacts();    // ← **最重要的修复点**
+    renderContacts();
 
   }catch(e){
     friends=[];
-    renderContacts();    // 错误时也刷新（保持一致）
+    renderContacts();
   }
 }
 
@@ -290,8 +265,7 @@ function renderContacts() {
   if (!friendsList) return;
   friendsList.innerHTML = '';
 
-  // 获取当前在线用户列表
-  const onlineList = window.onlineUsersList || []; // window.onlineUsersList 会在 socket.on('online-status') 更新
+  const onlineList = window.onlineUsersList || [];
 
   friends.forEach(item => {
   const f = item.friend;
@@ -314,11 +288,10 @@ function renderContacts() {
   const sub = document.createElement('div');
   sub.className = 'small muted';
   
-  // 直接使用最新的在线列表判断
   if (window.onlineUsersList && Array.isArray(window.onlineUsersList)) {
     sub.textContent = window.onlineUsersList.includes(f) ? '在线' : '离线';
   } else {
-    sub.textContent = '离线'; // 默认离线
+    sub.textContent = '离线';
   }
 
   txt.appendChild(name);
@@ -327,14 +300,11 @@ function renderContacts() {
   left.appendChild(txt);
   div.appendChild(left);
 
-
-    // 点击打开聊天
     div.addEventListener('click', () => {
       switchTab('tab-messages');
       openConversation(f);
     });
 
-    // 编辑备注按钮
     const editBtn = document.createElement('button');
     editBtn.textContent = '备注';
     editBtn.className = 'edit-remark-btn';
@@ -371,13 +341,13 @@ async function loadConversations() {
     conv.sort((a,b) => {
   const t1 = a.last ? a.last.ts : 0;
   const t2 = b.last ? b.last.ts : 0;
-  return t2 - t1; // 最新在前
+  return t2 - t1;
 });
 
     conv.forEach(c => {
       const div = document.createElement('div');
       div.className = 'friend';
-      div.style.position = 'relative'; // 关键：红点绝对定位必须在 relative 父容器
+      div.style.position = 'relative';
 
       const left = document.createElement('div');
       left.style.display = 'flex';
@@ -401,7 +371,6 @@ async function loadConversations() {
 
       div.appendChild(left);
 
-      // 红点
       const dot = document.createElement('div');
       dot.className = 'red-dot';
       dot.style.position = 'absolute';
@@ -414,7 +383,6 @@ async function loadConversations() {
       dot.style.visibility = unreadMap[c.friend] ? 'visible' : 'hidden';
       div.appendChild(dot);
 
-      // 点击打开会话
       div.addEventListener('click', () => openConversation(c.friend));
 
       conversationsList.appendChild(div);
@@ -427,7 +395,6 @@ async function loadConversations() {
 
 function openConversation(friend) {
   currentFriend = friend;
- // 打开会话就标记为已读
   unreadMap[friend] = false;
   updateConversationRedDot(friend);
 
@@ -452,7 +419,6 @@ function openConversation(friend) {
 
 
   // --------------- 媒体处理（图片压缩 / 媒体上传） ---------------
-  // 返回 Blob（JPEG）且尽量压缩到 maxSizeMB
   function compressImage(file, maxSizeMB = 1) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -465,7 +431,6 @@ function openConversation(friend) {
         let targetW = img.width;
         let targetH = img.height;
 
-        // 限制像素，避免极大图片
         const MAX_PIXELS = 2000 * 2000;
         while (targetW * targetH > MAX_PIXELS) {
           targetW *= 0.9;
@@ -507,69 +472,54 @@ function openConversation(friend) {
     return cleanMimeExt || 'mp4';
   }
 
+  // ---------- 上传文件到 Railway 服务器（替代 Supabase Storage） ----------
   async function uploadMedia(file) {
     const isImage = !!file.type && file.type.startsWith('image/');
     const isVideo = !!file.type && file.type.startsWith('video/');
     if (!isImage && !isVideo) return { url: null, mediaType: null };
 
-    let uploadBody = file;
-    let contentType = file.type || 'application/octet-stream';
-    let prefix = 'file';
-    let ext = 'bin';
+    // 图片压缩后上传；视频原文件上传
+    const body = isImage ? await compressImage(file) : file;
 
-    if (isImage) {
-      uploadBody = await compressImage(file);
-      contentType = 'image/jpeg';
-      prefix = 'img';
-      ext = 'jpg';
-    } else {
-      // 视频保持原文件上传，不做压缩
-      prefix = 'video';
-      ext = pickVideoExt(file);
-    }
+    const formData = new FormData();
+    formData.append('file', body, file.name);
 
-    // 生成安全文件名
-    let fileName = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
-    fileName = fileName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-
-    const { error } = await client.storage.from(SUPABASE_BUCKET).upload(fileName, uploadBody, {
-      contentType,
-      upsert: false,
-    });
-
-    if (error) {
-      console.error('Supabase upload error:', error);
+    try {
+      const res = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!data.success || !data.url) {
+        console.error('Upload failed:', data.msg);
+        return { url: null, mediaType: null };
+      }
+      return {
+        url: data.url,
+        mediaType: isImage ? 'image' : 'video'
+      };
+    } catch (err) {
+      console.error('Upload error:', err);
       return { url: null, mediaType: null };
     }
-
-    const { data: urlData } = client.storage.from(SUPABASE_BUCKET).getPublicUrl(fileName);
-    return {
-      url: urlData?.publicUrl || null,
-      mediaType: isImage ? 'image' : 'video',
-    };
   }
 
-  // --------------- 消息渲染：通用的 URL/图片识别 ---------------
-  // 将文本拆分为普通文本、普通链接、图片预览 DOM 片段
+  // --------------- 消息渲染 ---------------
   function createMessageContentNode(text) {
-    // 非空保护
     if (!text && text !== '') return document.createTextNode('');
 
     const frag = document.createDocumentFragment();
-    // URL 正则（很简单，适合大多数 http(s) 链接）
     const urlRegex = /https?:\/\/[^\s]+/g;
     let lastIndex = 0;
     let match;
     while ((match = urlRegex.exec(text)) !== null) {
       const url = match[0];
       const idx = match.index;
-      // 之前的普通文本
       if (idx > lastIndex) {
         const plain = text.slice(lastIndex, idx);
         frag.appendChild(document.createTextNode(plain));
       }
 
-      // 判断是否为图片链接（按扩展名）
       const urlForExt = url.split('#')[0].split('?')[0];
       const isImg = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(urlForExt);
       const isVideo = /\.(mp4|webm|ogg|ogv|mov|m4v|avi|mkv|3gp|wmv|mpe?g)$/i.test(urlForExt);
@@ -623,7 +573,6 @@ function openConversation(friend) {
         wrap.appendChild(video);
         frag.appendChild(wrap);
       } else {
-        // 普通链接显示为可点链接
         const a = document.createElement('a');
         a.href = url;
         a.target = '_blank';
@@ -634,16 +583,13 @@ function openConversation(friend) {
 
       lastIndex = idx + url.length;
     }
-    // 最后的文本
     if (lastIndex < text.length) {
       frag.appendChild(document.createTextNode(text.slice(lastIndex)));
     }
-    // 如果没有匹配到任何 URL，直接返回文本节点
     if (!frag.childNodes.length) return document.createTextNode(text);
     return frag;
   }
 
-  // 将消息内容安全渲染到气泡（不使用 innerHTML）
   function addMessageToWindow(sender, text) {
     if(!chatWindow) return;
     const isMe = sender === currentUser;
@@ -670,7 +616,7 @@ function openConversation(friend) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  // --------------- 发送消息（文本/图片/视频） ---------------
+  // --------------- 发送消息 ---------------
   async function sendMessage(text) {
     if (!currentFriend) { alert('请选择会话'); return; }
     if (!text) return;
@@ -722,17 +668,14 @@ function openConversation(friend) {
       const prevText = btnSendImage.textContent;
       btnSendImage.textContent = '发送中...';
       try {
-        // 上传并获取公开 URL（图片压缩；视频原文件上传）
         const { url, mediaType } = await uploadMedia(pendingMediaFile);
         if (!url || !mediaType) {
           alert('上传失败');
           return;
         }
 
-        // 插入到会话窗口并作为消息发送
         addMessageToWindow(currentUser, url);
 
-        // 发送到服务器
         const payload = { from: currentUser, to: currentFriend, message: url, type: mediaType };
         if (socket && socket.connected) socket.emit('send-message', payload);
         else fetch('/send-fallback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }).catch(()=>{});
@@ -749,7 +692,7 @@ function openConversation(friend) {
     });
   }
 
-  // --------------- 编辑备注 / 添加好友 / 头像保存 / 注册登录等（保留原逻辑） ---------------
+  // --------------- 编辑备注 / 添加好友 / 头像保存 / 注册登录等 ---------------
   function editRemarkForFriend(f){
     const cur = friends.find(x=>x.friend===f); const curR = cur?cur.remark:'';
     const r = prompt('设置备注（留空则取消）', curR);
@@ -814,7 +757,6 @@ function openConversation(friend) {
     } catch(e) { alert('登录请求失败'); }
   });
 
-
   // Auto-login
   (function tryAutoLogin(){
     const stored = localStorage.getItem('chat_currentUser');
@@ -838,7 +780,6 @@ function openConversation(friend) {
     }
   })();
 
-  // Logout
   if(btnLogout) btnLogout.addEventListener('click', ()=> {
     if(currentUser) localStorage.setItem('chat_lastUser', currentUser);
     localStorage.removeItem('chat_currentUser');
@@ -847,7 +788,6 @@ function openConversation(friend) {
     location.reload();
   });
 
-  // Expose some globals for legacy code expecting them
   window.currentUser = currentUser;
   window.currentFriend = currentFriend;
   window.socket = socket;
