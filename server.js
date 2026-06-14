@@ -12,19 +12,20 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
 
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(__dirname));
 
 // ---------- 文件上传配置 ----------
-// 确保 uploads 目录存在
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// multer 存储配置：保存在 uploads/ 目录，保持原扩展名
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
@@ -38,11 +39,18 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB 上限
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
 
-// 静态托管 uploads 目录（供前端直接访问）
 app.use('/uploads', express.static(uploadsDir));
+
+// ---------- Health check (Railway 需要) ----------
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // ---------- Database config ----------
 const envDatabaseUrl =
@@ -59,7 +67,6 @@ const hasPgFields =
 
 if (!envDatabaseUrl && !hasPgFields) {
   console.error('Missing database connection env. Set DATABASE_URL (recommended) or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.');
-  process.exit(1);
 }
 
 const sslMode = String(process.env.PGSSLMODE || '').toLowerCase();
@@ -73,7 +80,9 @@ const sslConfig = disableSSL ? false : { rejectUnauthorized: false };
 const poolConfig = envDatabaseUrl
   ? {
       connectionString: envDatabaseUrl,
-      ssl: sslConfig
+      ssl: sslConfig,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000
     }
   : {
       host: process.env.PGHOST,
@@ -81,55 +90,70 @@ const poolConfig = envDatabaseUrl
       user: process.env.PGUSER,
       password: process.env.PGPASSWORD,
       database: process.env.PGDATABASE,
-      ssl: sslConfig
+      ssl: sslConfig,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000
     };
 
-const pool = new Pool(poolConfig);
+let pool;
+try {
+  pool = new Pool(poolConfig);
+} catch (err) {
+  console.error('Failed to create pool:', err);
+  process.exit(1);
+}
+
+pool.on('error', (err) => {
+  console.error('Unexpected pool error:', err);
+});
 
 async function initDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      avatar TEXT DEFAULT ''
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS friends (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL,
-      friend_id INT NOT NULL,
-      remark TEXT,
-      UNIQUE(user_id, friend_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id SERIAL PRIMARY KEY,
-      from_user TEXT NOT NULL,
-      to_user TEXT NOT NULL,
-      message TEXT NOT NULL,
-      type TEXT DEFAULT 'text',
-      ts BIGINT DEFAULT (EXTRACT(EPOCH FROM now())*1000)
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS unread_counts (
-      id SERIAL PRIMARY KEY,
-      user_id INT NOT NULL,
-      from_user_id INT NOT NULL,
-      count INT DEFAULT 0,
-      UNIQUE(user_id, from_user_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        avatar TEXT DEFAULT ''
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS friends (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        friend_id INT NOT NULL,
+        remark TEXT,
+        UNIQUE(user_id, friend_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        from_user TEXT NOT NULL,
+        to_user TEXT NOT NULL,
+        message TEXT NOT NULL,
+        type TEXT DEFAULT 'text',
+        ts BIGINT DEFAULT (EXTRACT(EPOCH FROM now())*1000)
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS unread_counts (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        from_user_id INT NOT NULL,
+        count INT DEFAULT 0,
+        UNIQUE(user_id, from_user_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+    console.log('Database tables initialized successfully');
+  } finally {
+    client.release();
+  }
 }
 
 // ---------- REST 接口 ----------
@@ -137,7 +161,6 @@ app.post('/register', async (req, res) => {
   const { username, password, code } = req.body;
 
   if (!username || !password) return res.json({ success: false, msg: '用户名/密码不能为空' });
-
   if (code !== '0123') return res.json({ success: false, msg: '邀请码错误' });
 
   try {
@@ -174,6 +197,7 @@ app.get('/friends/:username', async (req, res) => {
     `, [username]);
     res.json(r.rows.map(x => ({ friend: x.friend, avatar: x.avatar, remark: x.remark })));
   } catch (err) {
+    console.error('/friends ERR:', err);
     res.json([]);
   }
 });
@@ -239,6 +263,7 @@ app.post('/set-remark', async (req, res) => {
     ]);
     res.json({ success: true });
   } catch (err) {
+    console.error('/set-remark ERR:', err);
     res.json({ success: false });
   }
 });
@@ -263,17 +288,17 @@ app.get('/messages/:user/:friend', async (req, res) => {
     );
     res.json(r.rows);
   } catch (err) {
+    console.error('/messages ERR:', err);
     res.json([]);
   }
 });
 
-// ---------- 文件上传接口（替代 Supabase Storage） ----------
+// ---------- 文件上传接口 ----------
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.json({ success: false, msg: '没有上传文件' });
   }
 
-  // 生成可直接访问的 URL
   const url = `/uploads/${req.file.filename}`;
   const isImage = req.file.mimetype.startsWith('image/');
   const isVideo = req.file.mimetype.startsWith('video/');
@@ -375,16 +400,29 @@ io.on('connection', socket => {
   });
 });
 
+// ---------- 错误处理中间件 ----------
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ success: false, msg: '服务器内部错误' });
+});
+
 // ---------- 启动服务器 ----------
 const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';
+
 async function startServer() {
+  // 先启动 HTTP 服务，让 Railway 的 health check 能通过
+  server.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
+  });
+
+  // 异步初始化数据库，失败不阻塞启动
   try {
     await initDB();
-    console.log('DB connected');
-    server.listen(PORT, () => console.log(`Server running at port ${PORT}`));
+    console.log('Database connected and tables ready');
   } catch (err) {
-    console.error('DB init failed:', err);
-    process.exit(1);
+    console.error('Database initialization failed:', err);
+    console.log('Server will continue running without database - check your DATABASE_URL config');
   }
 }
 
